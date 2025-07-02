@@ -35,6 +35,10 @@ const LeftToolbar = () => {
         {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
         Door
       </button>
+      <button style={buttonStyle(mode === 'window')} onClick={() => toggleMode('window')}>
+        {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
+        window
+      </button>
     </div>
   );
 };

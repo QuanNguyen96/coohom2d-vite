@@ -35,8 +35,10 @@ export default function ResizableMovableBox() {
     doors,
     setDoors,
     gridLayout3d, setGridLayout3d,
+    modelThreeCommonRef,
   } = useEditor();
   const cameraRef = useRef()
+  const sceneRef = useRef()
   const [positionGrid, setPositionGrid] = useState({ startX: 0, startZ: 0, endX: 500, endZ: 500 })
 
   function loadStoreModel() {
@@ -136,10 +138,380 @@ export default function ResizableMovableBox() {
       </lineSegments>
     );
   }
+  function getSizeAlongAxis(box3, axis) {
+    const points = [
+      new THREE.Vector3(box3.min.x, box3.min.y, box3.min.z),
+      new THREE.Vector3(box3.max.x, box3.min.y, box3.min.z),
+      new THREE.Vector3(box3.min.x, box3.max.y, box3.min.z),
+      new THREE.Vector3(box3.min.x, box3.min.y, box3.max.z),
+      new THREE.Vector3(box3.max.x, box3.max.y, box3.min.z),
+      new THREE.Vector3(box3.max.x, box3.min.y, box3.max.z),
+      new THREE.Vector3(box3.min.x, box3.max.y, box3.max.z),
+      new THREE.Vector3(box3.max.x, box3.max.y, box3.max.z),
+    ];
+
+    let min = Infinity, max = -Infinity;
+
+    for (const p of points) {
+      const projection = p.dot(axis);
+      min = Math.min(min, projection);
+      max = Math.max(max, projection);
+    }
+
+    return max - min;
+  }
+
+  function addGroupToBox(model, target, boxForward) {
+    const modelGroup = new THREE.Group();
+    modelGroup.add(model);
+
+    const modelBox = new THREE.Box3().setFromObject(modelGroup);
+    const modelCenter = new THREE.Vector3();
+    modelBox.getCenter(modelCenter);
+    modelGroup.position.sub(modelCenter);
+
+    const pivotGroup = new THREE.Group();
+    pivotGroup.add(modelGroup);
+
+    const modelSize = new THREE.Vector3();
+    modelBox.getSize(modelSize);
+    const modelForward = modelSize.z > modelSize.x
+      ? new THREE.Vector3(0, 0, 1)
+      : new THREE.Vector3(1, 0, 0);
+
+    const boxDoorBox = new THREE.Box3().setFromObject(target);
+    const boxDoorSize = new THREE.Vector3();
+    boxDoorBox.getSize(boxDoorSize);
+    const boxDoorCenter = new THREE.Vector3();
+    boxDoorBox.getCenter(boxDoorCenter);
+
+    const angle = Math.atan2(boxForward.z, boxForward.x) - Math.atan2(modelForward.z, modelForward.x);
+    pivotGroup.rotation.y = angle;
+
+    pivotGroup.position.copy(boxDoorCenter);
+
+    pivotGroup.updateMatrixWorld(true, true);
+    const rotatedBox = new THREE.Box3().setFromObject(pivotGroup);
+    const rotatedSize = new THREE.Vector3();
+    rotatedBox.getSize(rotatedSize);
+
+    // === Trục định hướng theo quaternion sau xoay
+    const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(pivotGroup.quaternion).normalize();
+    const axisY = new THREE.Vector3(0, 1, 0).applyQuaternion(pivotGroup.quaternion).normalize();
+    const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(pivotGroup.quaternion).normalize();
+
+    // === Tính kích thước thực tế theo các trục
+    const boxpivotGroup = new THREE.Box3().setFromObject(pivotGroup);
+    const sizeX = getSizeAlongAxis(boxpivotGroup, axisX);
+    const sizeY = getSizeAlongAxis(boxpivotGroup, axisY);
+    const sizeZ = getSizeAlongAxis(boxpivotGroup, axisZ);
+    // === Scale đồng đều theo trục thực
+    const scaleX = boxDoorSize.x / sizeX;
+    const scaleY = boxDoorSize.y / sizeY;
+    const scaleZ = boxDoorSize.z / sizeZ;
+
+    pivotGroup.scale.set(scaleX, scaleY, scaleZ);
+    return { obj: pivotGroup };
+  }
+
+  function getDirectionFromBox(box3) {
+    const size = new THREE.Vector3();
+    box3.getSize(size);
+    const delta = new THREE.Vector3().subVectors(box3.max, box3.min);
+    // Ưu tiên trục XZ
+    return new THREE.Vector3(delta.x, 0, delta.z).normalize();
+  }
+
+  /**
+   * Đưa model vào đúng vị trí, scale và xoay để khớp với bounding box:
+   * - model: Object3D (Mesh/Group/Scene)
+   * - box3: THREE.Box3 định vị vùng cần khớp
+   * - angleDeg: góc hướng tường trên nền OXZ (0° = dọc theo OX)
+   */
+  function fitModelToBox2(model, box3, angleDeg = null) {
+    if (!model || !box3?.isBox3) return null;
+
+    // 1. Bọc model trong group wrapper để không làm thay đổi gốc
+    const wrapper = new THREE.Group();
+    wrapper.add(model);
+
+    // Reset transform ban đầu
+    model.position.set(0, 0, 0);
+    model.rotation.set(0, 0, 0);
+    model.scale.set(1, 1, 1);
+    wrapper.updateMatrixWorld(true, true);
+
+    // 2. Tính bounding box gốc
+    const modelBox = new THREE.Box3().setFromObject(model);
+    const modelSize = new THREE.Vector3();
+    modelBox.getSize(modelSize);
+    const modelCenter = new THREE.Vector3();
+    modelBox.getCenter(modelCenter);
+
+    // 3. Đưa model về gốc (center tại 0,0,0)
+    model.position.sub(modelCenter);
+    wrapper.updateMatrixWorld(true, true);
+
+    // 4. Tính kích thước box target
+    const targetSize = new THREE.Vector3();
+    box3.getSize(targetSize);
+
+    // 5. Scale riêng theo từng trục
+    const scaleX = targetSize.x / modelSize.x;
+    const scaleY = targetSize.y / modelSize.y;
+    const scaleZ = targetSize.z / modelSize.z;
+    wrapper.scale.set(scaleX, scaleY, scaleZ);
+
+    // 6. Xoay model theo hướng tường
+    if (angleDeg !== null) {
+      const angleRad = (angleDeg * Math.PI) / 180;
+
+      const isFacingX = isModelFacingX(model);
+      const modelDir = isFacingX ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+      const wallDir = new THREE.Vector3(Math.cos(angleRad), 0, -Math.sin(angleRad)); // canvas Y -> -Z
+
+      const deltaAngle = Math.atan2(wallDir.z, wallDir.x) - Math.atan2(modelDir.z, modelDir.x);
+      wrapper.rotation.y = deltaAngle;
+    }
+
+    // 7. Đặt vào đúng vị trí
+    const targetCenter = new THREE.Vector3();
+    box3.getCenter(targetCenter);
+    wrapper.position.copy(targetCenter);
+
+    wrapper.updateMatrixWorld(true, true);
+    return wrapper;
+  }
+
+  /**
+   * Xác định xem model ban đầu có đang nằm ngang theo trục X (trên mặt phẳng OXZ)
+   */
+  function isModelFacingX(model) {
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    return size.x >= size.z; // nếu chiều X dài hơn Z => nằm ngang
+  }
+  // function fitModelToBox(model, box3, angleDeg = null) {
+  //   if (!model || !box3?.isBox3) return null;
+
+  //   // 1. Tạo group wrapper chứa model
+  //   const wrapper = new THREE.Group();
+  //   wrapper.add(model);
+
+  //   // 2. Reset transform model
+  //   model.position.set(0, 0, 0);
+  //   model.rotation.set(0, 0, 0);
+  //   model.scale.set(1, 1, 1);
+  //   wrapper.rotation.set(0, 0, 0);
+  //   wrapper.scale.set(1, 1, 1);
+  //   wrapper.position.set(0, 0, 0);
+  //   wrapper.updateMatrixWorld(true, true);
+
+  //   // 3. Lấy kích thước & tâm model
+  //   const modelBox = new THREE.Box3().setFromObject(model);
+  //   const modelSize = new THREE.Vector3();
+  //   modelBox.getSize(modelSize);
+  //   const modelCenter = new THREE.Vector3();
+  //   modelBox.getCenter(modelCenter);
+
+  //   // Đưa model về gốc (center tại 0,0,0)
+  //   model.position.sub(modelCenter);
+  //   wrapper.updateMatrixWorld(true, true);
+
+  //   // 4. Xử lý xoay box3 về hướng OX để scale khít
+  //   const boxSize = new THREE.Vector3();
+  //   box3.getSize(boxSize);
+  //   const boxCenter = new THREE.Vector3();
+  //   box3.getCenter(boxCenter);
+
+  //   let scaleX = boxSize.x / modelSize.x;
+  //   let scaleY = boxSize.y / modelSize.y;
+  //   let scaleZ = boxSize.z / modelSize.z;
+
+  //   if (angleDeg !== null && angleDeg !== 0) {
+  //     // Giả lập box3 đã được xoay ngược để khớp trục OX
+  //     const angleRad = (angleDeg * Math.PI) / 180;
+  //     const cos = Math.cos(-angleRad);
+  //     const sin = Math.sin(-angleRad);
+
+  //     // Xoay lại model sao cho box3 song song OX
+  //     const rotatedSize = new THREE.Vector3(
+  //       Math.abs(boxSize.x * cos + boxSize.z * sin),
+  //       boxSize.y,
+  //       Math.abs(-boxSize.x * sin + boxSize.z * cos)
+  //     );
+
+  //     scaleX = rotatedSize.x / modelSize.x;
+  //     scaleY = rotatedSize.y / modelSize.y;
+  //     scaleZ = rotatedSize.z / modelSize.z;
+  //   }
+
+  //   wrapper.scale.set(scaleX, scaleY, scaleZ);
+  //   wrapper.updateMatrixWorld(true, true);
+
+  //   // 5. Xoay lại model đúng hướng angleDeg (quay quanh trục OY)
+  //   if (angleDeg !== null) {
+  //     const angleRad = (angleDeg * Math.PI) / 180;
+  //     wrapper.rotation.y = -angleRad;
+  //   }
+
+  //   // 6. Đặt wrapper về đúng center của box3
+  //   wrapper.position.copy(boxCenter);
+
+  //   wrapper.updateMatrixWorld(true, true);
+  //   return wrapper;
+  // }
+  function getAxisAlignedBox(box3, angleDeg = null) {
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box3.getSize(size);
+    box3.getCenter(center);
+
+    // Nếu chưa có góc thì tự tính hướng dài hơn (OX hoặc OZ)
+    if (angleDeg === null) {
+      const dx = box3.max.x - box3.min.x;
+      const dz = box3.max.z - box3.min.z;
+      angleDeg = Math.atan2(-dz, dx) * (180 / Math.PI);
+    }
+
+    // Xoay ngược lại (đưa box3 về hướng OX)
+    const angleRad = (-angleDeg * Math.PI) / 180;
+
+    const points = [
+      new THREE.Vector3(box3.min.x, box3.min.y, box3.min.z),
+      new THREE.Vector3(box3.max.x, box3.min.y, box3.min.z),
+      new THREE.Vector3(box3.min.x, box3.max.y, box3.min.z),
+      new THREE.Vector3(box3.min.x, box3.min.y, box3.max.z),
+      new THREE.Vector3(box3.max.x, box3.max.y, box3.min.z),
+      new THREE.Vector3(box3.min.x, box3.max.y, box3.max.z),
+      new THREE.Vector3(box3.max.x, box3.min.y, box3.max.z),
+      new THREE.Vector3(box3.max.x, box3.max.y, box3.max.z),
+    ];
+
+    const m = new THREE.Matrix4()
+      .makeTranslation(-center.x, 0, -center.z)
+      .multiply(new THREE.Matrix4().makeRotationY(angleRad))
+      .multiply(new THREE.Matrix4().makeTranslation(center.x, 0, center.z));
+
+    points.forEach(p => p.applyMatrix4(m));
+
+    const alignedBox = new THREE.Box3().setFromPoints(points);
+    return alignedBox;
+  }
+  function fitModelToBox(model, box3, angleDeg = null) {
+    if (!model || !box3?.isBox3) return null;
+
+    // 1. Bọc model trong group wrapper
+    const wrapper = new THREE.Group();
+    wrapper.add(model);
+
+    // 2. Reset model transform
+    model.position.set(0, 0, 0);
+    model.rotation.set(0, 0, 0);
+    model.scale.set(1, 1, 1);
+    wrapper.position.set(0, 0, 0);
+    wrapper.rotation.set(0, 0, 0);
+    wrapper.scale.set(1, 1, 1);
+    wrapper.updateMatrixWorld(true, true);
+
+    // 3. Tính bounding box và tâm model
+    const modelBox = new THREE.Box3().setFromObject(model);
+    const modelCenter = new THREE.Vector3();
+    modelBox.getCenter(modelCenter);
+
+    // 4. Đưa model về gốc (center tại 0,0,0)
+    model.position.sub(modelCenter);
+    wrapper.updateMatrixWorld(true, true);
+
+    // 5. Đặt wrapper vào vị trí center của box3
+    const boxCenter = new THREE.Vector3();
+    box3.getCenter(boxCenter);
+    wrapper.position.copy(boxCenter);
+    wrapper.updateMatrixWorld(true, true);
+
+    // 6. Tính scale để khớp với box3 đã xoay về hướng OX
+    const targetSize = new THREE.Vector3();
+    box3.getSize(targetSize);
+
+    const modelSize = new THREE.Vector3();
+    new THREE.Box3().setFromObject(model).getSize(modelSize);
+
+
+    const modelBox2 = new THREE.Box3().setFromObject(model);
+    const targetBox2 = box3.clone(); // box3 là Box3 target
+    // 2. Tạo helper cho cả hai
+    const modelBoxHelper = new THREE.Box3Helper(modelBox2, 0xff0000);   // đỏ: model
+    const targetBoxHelper = new THREE.Box3Helper(targetBox2, 'red'); // xanh: box3 target
+    // 3. Thêm vào scene
+    sceneRef.current.add(modelBoxHelper);
+    sceneRef.current.add(targetBoxHelper);
+
+    console.log("sinangleDeg=", Math.sin(angleDeg))
+    //  const scaleX = targetSize.x / modelSize.z;
+    console.log("targetSize", targetSize)
+    console.log("modelSize", modelSize)
+    const scaleX = targetSize.z / modelSize.x * (1 / Math.sin(angleDeg));
+    const scaleY = targetSize.y / modelSize.y;
+    const scaleZ = targetSize.x / modelSize.z * (1 / Math.sin(angleDeg));
+    // const scaleZ = targetSize.z / modelSize.x;
+    // wrapper.scale.set(scaleX,1,scaleZ)
+    // wrapper.scale.set(scaleX, scaleY, scaleZ);
+    wrapper.updateMatrixWorld(true, true);
+
+    return wrapper;
+  }
+
+
+
+
+
+  function computeAngleFromBox3(box3) {
+    const center = new THREE.Vector3();
+    box3.getCenter(center);
+
+    const dx = box3.max.x - box3.min.x;
+    const dz = box3.max.z - box3.min.z;
+
+    // Tính hướng (x, z) và chuyển thành góc theo mặt phẳng OXZ
+    const angleRad = Math.atan2(-dz, dx); // -dz vì trục canvas Y là -Z
+    const angleDeg = angleRad * (180 / Math.PI);
+
+    return angleDeg;
+  }
+  function getAngleFromPolygon(polygon) {
+    // Giả định polygon là 4 điểm tạo thành hình chữ nhật
+    // Dùng 2 điểm đầu để tính vector theo chiều dài
+    const p0 = polygon[0];
+    const p1 = polygon[1];
+
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+
+    const angleRad = Math.atan2(dy, dx); // canvas: x-y, nên dy
+    const angleDeg = (angleRad * 180) / Math.PI;
+
+    return angleDeg;
+  }
 
   const renderWallFunc = () => {
     // console.log("doors",doors)
     if (!walls || !walls.length) return
+    const modelThreeCommonRefT = modelThreeCommonRef.current;
+    let modelDoor;
+    try {
+      modelDoor =
+        modelThreeCommonRefT["door"][
+        Object.keys(modelThreeCommonRefT["door"])[0]
+        ];
+    } catch { }
+    let modelWindow;
+    try {
+      modelWindow =
+        modelThreeCommonRefT["window"][
+        Object.keys(modelThreeCommonRefT["window"])[0]
+        ];
+    } catch { }
     let objDoors = {}
     if (doors && doors.length) {
       for (let i = 0; i < doors.length; i++) {
@@ -172,6 +544,7 @@ export default function ResizableMovableBox() {
     }
     // console.log("objDoors", objDoors)
     let objWindows = {}
+    let objWindowsModel = {}
     if (windows && windows.length) {
       for (let i = 0; i < windows.length; i++) {
         const window = windows[i]
@@ -193,13 +566,123 @@ export default function ResizableMovableBox() {
         });
         // Chuyển từ mặt OXY → OXZ
         geometry.rotateX(-Math.PI / 2);
+        geometry.computeBoundingBox();
         const mesh = new THREE.Mesh(
           geometry,
           new THREE.MeshBasicMaterial({ color: 'green', visible: true }) // hoặc dùng visible: true để debug
         );
         let offsetY = window?.offsetY || 30;
-        mesh.position.y = offsetY; // nâng theo chiều cao thực
-        mesh.updateMatrixWorld()
+        // mesh.position.y = offsetY; // nâng theo chiều cao thực
+        // mesh.updateMatrix();
+        // mesh.updateMatrixWorld()
+
+        const box = new THREE.Box3().setFromObject(mesh);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const pivot = new THREE.Object3D();
+        pivot.position.copy(center);
+        // 4. Dịch mesh về vị trí tương đối với pivot
+        mesh.position.sub(center);
+        // 5. Thêm mesh vào pivot và xoay pivot để làm thẳng tường
+        pivot.add(mesh);
+        pivot.rotation.y = (window.angle * Math.PI) / 180;
+        pivot.updateMatrixWorld(true);
+
+        const boxHelper = new THREE.BoxHelper(pivot, 'pink'); // Màu vàng
+        sceneRef.current.add(boxHelper)
+        sceneRef.current.add(pivot)
+        return
+        if (modelWindow) {
+          // === Clone modelWindow ===
+          const windowClone = modelWindow.clone(true);
+          windowClone.traverse(child => {
+            if (child.isMesh) {
+              child.updateMatrixWorld()
+              if (child.material.map) {
+                child.material.map = null; // Bỏ texture để màu trắng hiện ra
+              }
+              child.material.color.set(0xffffff)
+            }
+          });
+          // === Tính hướng từ angle
+          // const angleRad = (window.angle * Math.PI) / 180;
+          // const dir = new THREE.Vector2(Math.cos(angleRad), Math.sin(angleRad));
+          // const boxForward = new THREE.Vector3(dir.x, 0, -dir.y); // flip vì từ canvas sang 3D
+          // // const { obj: windowGroup } = addGroupToBox(windowClone, mesh, boxForward)
+
+
+
+
+          // 1. Clone mesh
+          const mesh2 = mesh.clone();
+          console.log("mesh222", mesh2)
+          mesh2.matrixAutoUpdate = true;
+          mesh2.material.wireframe = true;
+
+          // 1. Tính bounding box và tâm
+          const box = new THREE.Box3().setFromObject(mesh2);
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+
+          // 2. Tính góc nghiêng hiện tại (dựa vào window.angle hoặc outerPolygon)
+          const angleDeg = window?.angle || getAngleFromPolygon(window.outerPolygon);
+          const angleRad = (angleDeg * Math.PI) / 180;
+
+          // 3. Tạo pivot tại tâm của mesh
+          const pivot = new THREE.Object3D();
+          pivot.position.copy(center);
+
+          // 4. Dịch mesh về vị trí tương đối với pivot
+          mesh2.position.sub(center);
+
+          // 5. Thêm mesh vào pivot và xoay pivot để làm thẳng tường
+          pivot.add(mesh2);
+          pivot.rotation.y = angleRad;
+          pivot.updateMatrixWorld(true);
+
+          // 6. Tính bounding box đã xoay từ pivot
+          const box2 = new THREE.Box3().setFromObject(pivot);
+          const size2 = new THREE.Vector3();
+          box2.getSize(size2);
+
+          // 7. Tạo box mesh để hiển thị
+          const geometry = new THREE.BoxGeometry(size2.x, size2.y, size2.z);
+          const material = new THREE.MeshBasicMaterial({
+            color: "yellow",
+            wireframe: true,
+          });
+          const boxMesh = new THREE.Mesh(geometry, material);
+
+          // 8. Đặt boxMesh tại đúng tâm bounding box
+          const center2 = new THREE.Vector3();
+          box2.getCenter(center2);
+          boxMesh.position.copy(center2);
+
+          // 9. Thêm vào scene
+          sceneRef.current.add(pivot);     // hiển thị mesh đã xoay
+          sceneRef.current.add(boxMesh);   // hiển thị bounding box đúng
+
+
+
+
+          // }
+
+
+          const windowBox = new THREE.Box3().setFromObject(mesh2); // bounding box của lỗ tường
+
+
+
+
+
+
+          // Có thể truyền window.angle nếu có, hoặc để null
+          // const windowGroup = fitModelToBox(windowClone, windowBox, window.angle);
+
+          // console.log("windowGroup", windowGroup)
+          // if (windowGroup) {
+          //   objWindowsModel[windowGroup.uuid] = windowGroup
+          // }
+        }
         objWindows[mesh.id] = mesh;
       }
     }
@@ -252,15 +735,18 @@ export default function ResizableMovableBox() {
         return <React.Fragment key={`wall-window-door-${wall.id}`}>
           {/* {Object.entries(objWindows).map(([id, meshCut]) => (
             <primitive key={`window-${meshCut.uuid}`} object={meshCut} />
-          ))}
-          {Object.entries(objDoors).map(([id, meshCut]) => (
+          ))} */}
+          {/* {Object.entries(objDoors).map(([id, meshCut]) => (
             <primitive key={`door-${meshCut.uuid}`} object={meshCut} />
           ))} */}
+          {/* {Object.entries(objWindowsModel).map(([id, window]) => (
+            <primitive key={`window-${window.uuid}`} object={window} />
+          ))}
           <primitive
             key={`wall-${wallMesh.uuid}`}
             object={wallMesh}
             dispose={null}
-          />
+          /> */}
         </React.Fragment>
       });
   };
@@ -356,6 +842,7 @@ export default function ResizableMovableBox() {
 
   function SetupCamera() {
     const { scene, camera, size } = useThree();
+    sceneRef.current = scene
     cameraRef.current = camera;
     useEffect(() => {
       // Set các thông số camera

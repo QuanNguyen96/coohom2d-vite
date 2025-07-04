@@ -65,7 +65,6 @@ const DOOR_CONFIG = {
 
 
 const CanvasGridKonva = () => {
-  const stageRef = useRef();
   const {
     mode,
     setMode,
@@ -81,6 +80,7 @@ const CanvasGridKonva = () => {
     wallChange, setWallChange,
     modelThreeCommonRef,
     unitMToPixelCanvas, setUnitMToPixelCanvas,
+    canvasLayout2dRef,
   } = useEditor();
 
   const [tempStartPoint, setTempStartPoint] = useState(null);
@@ -105,6 +105,7 @@ const CanvasGridKonva = () => {
       x: window.innerWidth / 2 - gridExtent,
       y: window.innerHeight / 2 - gridExtent,
     });
+    console.log(`x=${window.innerWidth / 2 - gridExtent} x=${window.innerHeight / 2 - gridExtent}`)
     loadModelCommons();
   }, []);
   async function createFileFromUrl(
@@ -150,7 +151,6 @@ const CanvasGridKonva = () => {
               let path1 = modelStore[modelName].data[i].path;
               let splitPath = path1.split('/')
               let fileNameT = splitPath[splitPath.length - 1]
-              console.log("doc file", fileNameT)
               const file = await createFileFromUrl(path1, fileNameT);
               if (!file) return;
               let fileName = file.name;
@@ -185,14 +185,12 @@ const CanvasGridKonva = () => {
                 };
                 reader.readAsArrayBuffer(file);
               } else if (typeFile == "zip") {
-                console.log("vao doc file zip nay")
                 try {
                   const zip = await JSZip.loadAsync(file);
                   // Tìm file scene.gltf trong zip
                   const gltfEntry = Object.values(zip.files).find((f) =>
                     f.name.endsWith(".gltf")
                   );
-                  console.log("gltfEntry=", gltfEntry)
                   if (!gltfEntry) {
                     console.error("Không tìm thấy file .gltf trong zip");
                     return;
@@ -211,14 +209,12 @@ const CanvasGridKonva = () => {
                       }
                     })
                   );
-                  console.log("blobUrlMap", blobUrlMap)
                   // ✅ Tạo manager và setURLModifier
                   const manager = new THREE.LoadingManager();
                   manager.setURLModifier((url) => {
                     const normalized = url.replace(/^(\.\/|\/)/, ""); // fix đường dẫn có ./ hoặc /
                     return blobUrlMap[normalized] || url;
                   });
-                  console.log("manager=", manager)
 
                   // ✅ Truyền manager vào loader
                   const loader = new GLTFLoader(manager);
@@ -232,7 +228,6 @@ const CanvasGridKonva = () => {
                   const gltf = await loader.parseAsync(gltfText, ""); // path rỗng vì bạn dùng blob
                   try {
                     const model = gltf.scene;
-                    console.log("model", model)
                     if (!modelThreeCommonRef.current[modelName]) {
                       modelThreeCommonRef.current[modelName] = {}
                     }
@@ -253,7 +248,6 @@ const CanvasGridKonva = () => {
       }
     }
     await Promise.all(promiseAll)
-    console.log("modelThreeCommonRef", modelThreeCommonRef)
   };
 
   const getVertexById = (id) => vertices.find((v) => v.id === id);
@@ -338,12 +332,13 @@ const CanvasGridKonva = () => {
 
     const isDifferent = JSON.stringify(walls) !== JSON.stringify(newWalls);
     if (isDifferent) setWalls(newWalls);
+    console.log("watch walls", walls)
   }, [walls, vertices]);
 
 
 
   const toWorldCoords = (x, y) => {
-    const transform = stageRef.current.getAbsoluteTransform().copy().invert();
+    const transform = canvasLayout2dRef.current.getAbsoluteTransform().copy().invert();
     return transform.point({ x, y });
   };
 
@@ -922,6 +917,7 @@ const CanvasGridKonva = () => {
 
   const handleMouseDown = (e) => {
     const { x, y } = toWorldCoords(e.evt.layerX, e.evt.layerY);
+    console.log(`click x=${x} y=${y}`)
     setMouseDownTime(Date.now());
     const hit = vertices.find((v) => Math.hypot(v.x - x, v.y - y) < 10);
     if (hit) setMouseDownVertex(hit);
@@ -1002,6 +998,11 @@ const CanvasGridKonva = () => {
               name: "Wall",
             },
           ]);
+          let startvercite = getEffectiveVertex(tempStartPoint.id);
+          const endtvercite = getEffectiveVertex(startV.id);
+          console.log("add wall duy nhất")
+          console.log("startvercite", startvercite)
+          console.log("endtvercite", endtvercite)
         }
         setTempStartPoint(startV);
         setLastCreatedVertexId(null);
@@ -1251,7 +1252,7 @@ const CanvasGridKonva = () => {
     // if (!e.evt.ctrlKey) return; // chỉ zoom khi giữ Ctrl
     e.evt.preventDefault();
 
-    const stage = stageRef.current;
+    const stage = canvasLayout2dRef.current;
     const oldScale = scale;
     const pointer = stage.getPointerPosition();
 
@@ -1284,7 +1285,7 @@ const CanvasGridKonva = () => {
         <Stage
           width={window.innerWidth}
           height={window.innerHeight}
-          ref={stageRef}
+          ref={canvasLayout2dRef}
           scaleX={scale}
           scaleY={scale}
           x={offset.x}
@@ -1491,8 +1492,8 @@ const CanvasGridKonva = () => {
             {renderMeasurement()}
           </Layer>
         </Stage>
-        <SnapWindowToWall stageRef={stageRef} />
-        <SnapDoorToWall stageRef={stageRef} />
+        <SnapWindowToWall stageRef={canvasLayout2dRef} />
+        <SnapDoorToWall stageRef={canvasLayout2dRef} />
       </div>
 
     </>

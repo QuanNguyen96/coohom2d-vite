@@ -2,6 +2,10 @@
 import React from 'react';
 import { useEditor } from '../context/EditorContext';
 // import { ReactComponent as DoorIcon } from '../assets/icons/icons8/noun-door-736133.svg?react'; // nhớ ?react nếu dùng vite-plugin-svgr
+import {
+  Switch,
+  FormControlLabel,
+} from "@mui/material";
 
 const buttonStyle = (active) => ({
   display: 'flex',
@@ -20,26 +24,42 @@ const buttonStyle = (active) => ({
 });
 
 const LeftToolbar = () => {
-  const { mode, setMode } = useEditor();
+  const { mode, setMode, showFormDetect, setshowFormDetect } = useEditor();
 
   const toggleMode = (selectedMode) => {
     setMode(mode === selectedMode ? null : selectedMode);
   };
 
   return (
-    <div style={{ width: '100px', padding: '10px', background: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
-      <button style={buttonStyle(mode === 'wall')} onClick={() => toggleMode('wall')}>
-        Wall
-      </button>
-      <button style={buttonStyle(mode === 'door')} onClick={() => toggleMode('door')}>
-        {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
-        Door
-      </button>
-      <button style={buttonStyle(mode === 'window')} onClick={() => toggleMode('window')}>
-        {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
-        window
-      </button>
-    </div>
+    <>
+      <div className='flex flex-col'>
+        <div style={{ width: '100px', padding: '10px', background: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
+          <button style={buttonStyle(mode === 'wall')} onClick={() => toggleMode('wall')}>
+            Wall
+          </button>
+          <button style={buttonStyle(mode === 'door')} onClick={() => toggleMode('door')}>
+            {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
+            Door
+          </button>
+          <button style={buttonStyle(mode === 'window')} onClick={() => toggleMode('window')}>
+            {/* <DoorIcon width={16} height={16} style={{ marginRight: '6px' }} /> */}
+            window
+          </button>
+        </div>
+        <div className=''>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={showFormDetect}
+                onChange={(e) => setshowFormDetect(e.target.checked)}
+              />
+            }
+            label="Show From Detect:"
+            labelPlacement="top"
+          />
+        </div>
+      </div>
+    </>
   );
 };
 

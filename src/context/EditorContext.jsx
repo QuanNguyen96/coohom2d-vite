@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState,useRef  } from 'react';
+import React, { createContext, useContext, useState, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 const EditorContext = createContext();
 
@@ -6,7 +6,7 @@ export const EditorProvider = ({ children }) => {
   const [mode, setMode] = useState(null); // wall | door | null
   const [walls, setWalls] = useState([]);
   const [doors, setDoors] = useState([]);
-   const [windows, setWindows] = useState([]);
+  const [windows, setWindows] = useState([]);
   const [selectedWall, setSelectedWall] = useState(null); // 👈 THÊM DÒNG NÀY
   const [vertices, setVertices] = useState([]); // ✅ Thêm dòng này
   const [wallChange, setWallChange] = useState([]); // ✅ Thêm dòng này
@@ -16,7 +16,9 @@ export const EditorProvider = ({ children }) => {
   const [unitThreeToMM, setUnitThreeToMM] = useState(2)
   // 100 px = 1 mét = 1000mm
   const [unitMToPixelCanvas, setUnitMToPixelCanvas] = useState(100)
-    const modelThreeCommonRef = useRef({});
+  const modelThreeCommonRef = useRef({});
+  const [showFormDetect, setshowFormDetect] = useState(true)
+  const canvasLayout2dRef = useRef()
 
   return (
     <EditorContext.Provider
@@ -36,6 +38,9 @@ export const EditorProvider = ({ children }) => {
         unitThreeToMM, setUnitThreeToMM,
         unitMToPixelCanvas, setUnitMToPixelCanvas,
         modelThreeCommonRef,
+        showFormDetect, setshowFormDetect,
+        canvasLayout2dRef,
+
       }}
     >
       {children}

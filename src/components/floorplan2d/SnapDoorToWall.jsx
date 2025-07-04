@@ -157,14 +157,6 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
         reason: "Overlapping existing door"
       };
     }
-    // const halfLen = doorLength / 2;
-    // const halfThick = wallThickness / 2;
-    // const rect = {
-    //   x: point.x - dir.x * halfLen - perp.x * halfThick,
-    //   y: point.y - dir.y * halfLen - perp.y * halfThick,
-    //   width: Math.abs(dir.x * doorLength + perp.x * wallThickness),
-    //   height: Math.abs(dir.y * doorLength + perp.y * wallThickness),
-    // };
 
     if (doors && doors.length) {
 

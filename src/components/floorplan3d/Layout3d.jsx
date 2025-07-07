@@ -3,7 +3,7 @@ import _ from 'lodash';
 import { CSG } from 'three-csg-ts';
 import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
 import { OrbitControls, Text, useHelper, Environment, OrthographicCamera, useGLTF } from '@react-three/drei';
-import { useEditor } from '../context/EditorContext';
+import { useEditor } from '../../context/EditorContext';
 import * as THREE from 'three';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { DoubleSide, PointLightHelper } from 'three';
@@ -296,7 +296,7 @@ export default function ResizableMovableBox() {
               if (child.material.map) {
                 child.material.map = null; // Bỏ texture để màu trắng hiện ra
               }
-              child.material.color.set(0xffffff)
+              child.material.color.set('#c2c2e7')
             }
           });
           let mesh2;

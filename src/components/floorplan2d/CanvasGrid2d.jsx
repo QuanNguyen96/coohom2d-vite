@@ -1299,6 +1299,7 @@ const CanvasGridKonva = () => {
           draggable
           style={{ background: "#e5e5e5" }}
         >
+
           <Layer>
             {gridLines}
             {walls.map((w, i) => {
@@ -1386,65 +1387,6 @@ const CanvasGridKonva = () => {
                   [6, 4]
                 );
               })()}
-            {/* Vẽ cửa nếu có */}
-            {/* {Array.isArray(doors) &&
-            doors.map((door, i) => {
-              // Tìm wall tương ứng với cửa này
-              const wall = walls.find((w) => w.id === door.wallId);
-              if (!wall) return null;
-
-              // Lấy tọa độ 2 điểm đầu cuối tường
-              const v1 = getVertexById(wall.startId);
-              const v2 = getVertexById(wall.endId);
-              if (!v1 || !v2) return null;
-
-              // Tính toán vector wall
-              const dx = v2.x - v1.x;
-              const dy = v2.y - v1.y;
-              const wallLength = Math.hypot(dx, dy);
-              const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
-
-              // Thông số cửa
-              const doorWidth = door.width || 100; // chiều dài cửa trên tường
-              const doorHeight = door.height || 20; // chiều rộng (độ dày) cửa
-
-              // Tính vị trí bắt đầu cửa theo offset trên tường
-              const offset = door.offset || (wallLength - doorWidth) / 2;
-
-              // Tính điểm bắt đầu cửa trên tường (theo vector chuẩn hóa)
-              const normX = dx / wallLength;
-              const normY = dy / wallLength;
-              const doorStartX = v1.x + normX * offset;
-              const doorStartY = v1.y + normY * offset;
-
-              return (
-                <Rect
-                  key={`door-${i}`}
-                  x={doorStartX}
-                  y={doorStartY - doorHeight / 2} // để cửa canh giữa tường theo chiều rộng
-                  width={doorWidth}
-                  height={doorHeight}
-                  fill="brown"
-                  rotation={angleDeg}
-                  offsetX={0}
-                  offsetY={doorHeight / 2}
-                />
-              );
-            })} */}
-            {/* {doors.map((door) => (
-              <Rect
-                key={door.id}
-                x={door.rect.x}
-                y={door.rect.y}
-                width={door.rect.width}
-                height={door.rect.height}
-                fill="green"
-                offsetX={door.rect.width / 2} // Đẩy tâm vào giữa rect
-                offsetY={door.rect.height / 2}
-                rotation={door.angle}
-                shadowBlur={5}
-              />
-            ))} */}
             {doors.map((door) => (
               <React.Fragment key={door.id}>
                 {/* Outer Polygon – tường bị cắt */}
@@ -1490,10 +1432,76 @@ const CanvasGridKonva = () => {
               </React.Fragment>
             ))}
             {renderMeasurement()}
+            {/* {
+              (() => {
+                const walls = [
+
+
+                  { x: 3084, y: 3655.5 }
+                  ,
+                  { x: 3084, y: 3664.5 }
+                  ,
+                  { x: 3464, y: 3664.5 }
+                  ,
+                  { x: 3464, y: 3655.5 }
+                ];
+                return <Line
+                  points={walls.flatMap(p => [p.x, p.y])}
+                  closed
+                  stroke="yellow"
+                  strokeWidth={2}
+                  fill="rgba(0, 0, 255, 0.2)" // tô màu bên trong
+                />
+              })()
+            }
+            {
+              (() => {
+                const doors = [
+                  { x: 3309, y: 3656 }
+                  ,
+                  { x: 3309, y: 3665 }
+                  ,
+                  { x: 3371, y: 3665 }
+                  ,
+                  { x: 3371, y: 3656 }
+
+
+                ];
+                return <Line
+                  points={doors.flatMap(p => [p.x, p.y])}
+                  closed
+                  stroke="blue"
+                  strokeWidth={2}
+                  fill="rgba(0, 0, 255, 0.2)" // tô màu bên trong
+                />
+              })()
+            }
+            {
+              (() => {
+                const center = [
+
+                  { x: 3340, y: 3664.5 },
+                  { x: 3084, y: 3664.5 },
+                  { x: 3464, y: 3664.5 },
+                ];
+                return center.map((point, index) => (
+                  <Circle
+                    key={`point-${index}`}
+                    x={point.x}
+                    y={point.y}
+                    radius={5}
+                    fill="green"
+                    stroke="black"
+                    strokeWidth={1}
+                  />
+                ));
+              })()
+            } */}
           </Layer>
         </Stage>
         <SnapWindowToWall stageRef={canvasLayout2dRef} />
         <SnapDoorToWall stageRef={canvasLayout2dRef} />
+
       </div>
 
     </>

@@ -1,5 +1,6 @@
 import { Rnd } from 'react-rnd';
 import _ from 'lodash'
+import polygonClipping from 'polygon-clipping';
 import { useEditor } from "../../context/EditorContext";
 import React, {
   useEffect,
@@ -30,8 +31,11 @@ import {
   useForkRef,
   patch,
 } from "@mui/material";
+import useImage from 'use-image';
+import { Stage, Layer, Rect, Group, Circle, Text, Image } from "react-konva";
 import { v4 as uuidv4 } from 'uuid';
 import { RiDragMove2Fill } from "react-icons/ri";
+
 const modelNameYolo = ['wall-detection-xi9ox', 'wall-window-door-detection-zltye', 'walldetector2', 'wall-window-door-detection', 'test-nsycv', 'segmentation-wall-door-window-yeaua']
 
 const MINOR_DIVISIONS = 10;
@@ -53,6 +57,7 @@ const InitComponent = () => {
     walls, setWalls,
     vertices, setVertices,
     canvasLayout2dRef,
+    pixelPerMeter, setPixelPerMeter,
   } = useEditor();
 
   const DOOR_CONFIG = {
@@ -92,94 +97,252 @@ const InitComponent = () => {
   const [confidenceThreshold, setconfidenceThreshold] = useState(30);
   const [modeShowCanvasDetect, setmodeShowCanvasDetect] = useState('Draw Confidence')
   const [showImgDetect, setshowImgDetect] = useState(true)
+  const [showRuler, setshowRuler] = useState(false)
   const [overlapThreshold, setoverlapThreshold] = useState(50);
   const [modelSelected, setmodelSelected] = useState('wall-window-door-detection');
   const canvasbase64ImgDetect = useRef()
-
+  const canvasRulerRef = useRef()
+  const [konvaImage] = useImage(base64ImgDetect?.imgbase64 || '', 'anonymous');
+  const [ruler, setRuler] = useState({
+    x: 100,
+    y: 100,
+    lengthPx: 150,
+    height: 20,
+    rotation: 0,
+  });
+  const [isResizing, setIsResizing] = useState(false);
 
 
   // -------------------------watch-------------------------------------------
-  useEffect(() => {
-    if (!base64ImgDetect?.imgbase64) return;
 
-    const canvas = canvasbase64ImgDetect.current;
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
+  function drawPredictionsCanvasConverted() {
+    const predictions = detectedRes?.predictions?.filter(
+      (item) => item.confidence != null && item.confidence >= confidenceThreshold / 100
+    ) || [];
 
-    img.onload = () => {
-      // Set canvas size = container (hoặc ảnh gốc nếu không giới hạn)
+    let predictions_wall = [];
+    let predictions_window_door = [];
+
+    predictions.forEach((p) => {
+      if (p.class === 'wall') {
+        predictions_wall.push(p);
+      }
+      if (p.class === 'window' || p.class === 'door') {
+        predictions_window_door.push(p);
+      }
+    });
+
+    const renderGroup = (predictionList) => {
       const fixedHeight = 500;
-      const scale = fixedHeight / img.height;
-      const scaledWidth = img.width * scale;
+      const scale = konvaImage?.naturalHeight
+        ? fixedHeight / konvaImage.naturalHeight
+        : 1;
 
-      canvas.width = scaledWidth;
-      canvas.height = fixedHeight;
+      const scaledWidth = konvaImage?.naturalWidth
+        ? konvaImage.naturalWidth * scale
+        : 500;
+      const elements = [];
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (showImgDetect) {
-        ctx.drawImage(img, 0, 0, scaledWidth, fixedHeight);
-      }
-      const predictions = detectedRes?.predictions.filter(item => item.confidence != null && item.confidence >= confidenceThreshold / 100)
-      // Vẽ box
-      if (predictions && predictions.length) {
-        predictions.forEach((p) => {
-          // const x = (p.x - p.width / 2) * scale;
-          // const y = (p.y - p.height / 2) * scale;
-          // const boxW = p.width * scale;
-          // const boxH = p.height * scale;
+      predictionList.forEach((p, idx) => {
+        const x = (p.x - p.width / 2) * scale;
+        const y = (p.y - p.height / 2) * scale;
+        const w = p.width * scale;
+        const h = p.height * scale;
 
-          // // Vẽ khung box
-          // ctx.strokeStyle = "red";
-          // ctx.lineWidth = 2;
-          // ctx.strokeRect(x, y, boxW, boxH);
+        let strokeColor = 'red';
+        if (p.class === 'door') strokeColor = 'green';
+        if (p.class === 'window') strokeColor = 'yellow';
 
-          // // Vẽ nhãn
-          // const label = `${p.class || p.name || "label"} (${Math.round(p.confidence * 100)}%)`;
-          // ctx.fillStyle = "red";
-          // ctx.font = "14px Arial";
-          // ctx.fillText(label, x + 4, y - 6);
+        if (modeShowCanvasDetect !== 'Censor Predictions') {
+          elements.push(
+            <Rect
+              key={`rect-${p.class}-${idx}`}
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              stroke={strokeColor}
+              strokeWidth={2}
+            />
+          );
+        }
 
-          const x = (p.x - p.width / 2) * scale;
-          const y = (p.y - p.height / 2) * scale;
-          const boxW = p.width * scale;
-          const boxH = p.height * scale;
-          if (modeShowCanvasDetect !== 'Censor Predictions') {
-            // VẼ BOX luôn cho cả 3 mode còn lại
-            if (p.class == 'door') {
-              ctx.strokeStyle = "green";
-            } else {
-              ctx.strokeStyle = "red";
-            }
+        if (modeShowCanvasDetect === 'Draw Labels') {
+          elements.push(
+            <Text
+              key={`label-${p.class}-${idx}`}
+              x={x + 4}
+              y={y - 6}
+              text={`${p.class || p.name || 'label'} ${Math.round(p.confidence * 100)}%`}
+              fontSize={14}
+              fill="blue"
+            />
+          );
+        }
 
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, boxW, boxH);
-          }
+        if (modeShowCanvasDetect === 'Draw Confidence') {
+          elements.push(
+            <Text
+              key={`conf-${p.class}-${idx}`}
+              x={x + 4}
+              y={y + h + 14}
+              text={`${Math.round(p.confidence * 100)}%`}
+              fontSize={14}
+              fill="blue"
+            />
+          );
+        }
 
-          if (modeShowCanvasDetect === 'Draw Labels') {
-            const label = `${p.class || p.name || "label"} ${Math.round(p.confidence * 100)}%`;
-            ctx.fillStyle = "blue";
-            ctx.font = "14px Arial";
-            ctx.fillText(label, x + 4, y - 6);
-          }
+        if (modeShowCanvasDetect === 'Censor Predictions') {
+          elements.push(
+            <Rect
+              key={`censor-${p.class}-${idx}`}
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              fill="#add123"
+            />
+          );
+        }
+      });
 
-          if (modeShowCanvasDetect === 'Draw Confidence') {
-            const confidence = `${Math.round(p.confidence * 100)}%`;
-            ctx.fillStyle = "blue";
-            ctx.font = "14px Arial";
-            ctx.fillText(confidence, x + 4, y + boxH + 14);
-          }
-
-          if (modeShowCanvasDetect === 'Censor Predictions') {
-            ctx.fillStyle = "#add123";
-            ctx.fillRect(x, y, boxW, boxH);
-          }
-        });
-      }
-
+      return elements;
     };
 
-    img.src = base64ImgDetect.imgbase64;
-  }, [base64ImgDetect, detectedRes, confidenceThreshold, modeShowCanvasDetect, showImgDetect]);
+
+    return (
+      <>
+        <Layer listening={false}>
+          {renderGroup(predictions_wall)}
+        </Layer>
+        <Layer listening={false}>
+          {renderGroup(predictions_window_door)}
+        </Layer>
+      </>
+    );
+  }
+
+  // useEffect(() => {
+  //   if (!base64ImgDetect?.imgbase64) return;
+
+  //   const canvas = canvasbase64ImgDetect.current;
+  //   const ctx = canvas.getContext("2d");
+  //   const img = new Image();
+
+  //   img.onload = () => {
+  //     // Set canvas size = container (hoặc ảnh gốc nếu không giới hạn)
+  //     const fixedHeight = 500;
+  //     const scale = fixedHeight / img.height;
+  //     const scaledWidth = img.width * scale;
+
+  //     canvas.width = scaledWidth;
+  //     canvas.height = fixedHeight;
+
+  //     ctx.clearRect(0, 0, canvas.width, canvas.height);
+  //     if (showImgDetect) {
+  //       ctx.drawImage(img, 0, 0, scaledWidth, fixedHeight);
+  //     }
+  //     const predictions = detectedRes?.predictions.filter(item => item.confidence != null && item.confidence >= confidenceThreshold / 100)
+  //     // Vẽ box
+  //     let predictions_wall = []
+  //     let predictions_window_door = []
+  //     if (predictions && predictions.length) {
+  //       predictions.map(p => {
+  //         if (p.class == 'wall') {
+  //           predictions_wall.push(p)
+  //         }
+  //         if (p.class == 'window' || p.class == 'door') {
+  //           predictions_window_door.push(p)
+  //         }
+  //       })
+  //       if (predictions_wall.length) {
+  //         predictions_wall.forEach((p) => {
+  //           const x = (p.x - p.width / 2) * scale;
+  //           const y = (p.y - p.height / 2) * scale;
+  //           const boxW = p.width * scale;
+  //           const boxH = p.height * scale;
+  //           if (modeShowCanvasDetect !== 'Censor Predictions') {
+  //             // VẼ BOX luôn cho cả 3 mode còn lại
+  //             if (p.class == 'door') {
+  //               ctx.strokeStyle = "green";
+  //             } else if (p.class == 'window') {
+  //               ctx.strokeStyle = "yellow";
+  //             } else {
+  //               ctx.strokeStyle = "red";
+  //             }
+
+  //             ctx.lineWidth = 2;
+  //             ctx.strokeRect(x, y, boxW, boxH);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Draw Labels') {
+  //             const label = `${p.class || p.name || "label"} ${Math.round(p.confidence * 100)}%`;
+  //             ctx.fillStyle = "blue";
+  //             ctx.font = "14px Arial";
+  //             ctx.fillText(label, x + 4, y - 6);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Draw Confidence') {
+  //             const confidence = `${Math.round(p.confidence * 100)}%`;
+  //             ctx.fillStyle = "blue";
+  //             ctx.font = "14px Arial";
+  //             ctx.fillText(confidence, x + 4, y + boxH + 14);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Censor Predictions') {
+  //             ctx.fillStyle = "#add123";
+  //             ctx.fillRect(x, y, boxW, boxH);
+  //           }
+  //         });
+  //       }
+  //       if (predictions_window_door.length) {
+  //         predictions_window_door.forEach((p) => {
+  //           const x = (p.x - p.width / 2) * scale;
+  //           const y = (p.y - p.height / 2) * scale;
+  //           const boxW = p.width * scale;
+  //           const boxH = p.height * scale;
+  //           if (modeShowCanvasDetect !== 'Censor Predictions') {
+  //             // VẼ BOX luôn cho cả 3 mode còn lại
+  //             if (p.class == 'door') {
+  //               ctx.strokeStyle = "green";
+  //             } else if (p.class == 'window') {
+  //               ctx.strokeStyle = "yellow";
+  //             } else {
+  //               ctx.strokeStyle = "red";
+  //             }
+
+  //             ctx.lineWidth = 2;
+  //             ctx.strokeRect(x, y, boxW, boxH);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Draw Labels') {
+  //             const label = `${p.class || p.name || "label"} ${Math.round(p.confidence * 100)}%`;
+  //             ctx.fillStyle = "blue";
+  //             ctx.font = "14px Arial";
+  //             ctx.fillText(label, x + 4, y - 6);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Draw Confidence') {
+  //             const confidence = `${Math.round(p.confidence * 100)}%`;
+  //             ctx.fillStyle = "blue";
+  //             ctx.font = "14px Arial";
+  //             ctx.fillText(confidence, x + 4, y + boxH + 14);
+  //           }
+
+  //           if (modeShowCanvasDetect === 'Censor Predictions') {
+  //             ctx.fillStyle = "#add123";
+  //             ctx.fillRect(x, y, boxW, boxH);
+  //           }
+  //         });
+  //       }
+
+  //     }
+
+  //   };
+
+  //   img.src = base64ImgDetect.imgbase64;
+  // }, [base64ImgDetect, detectedRes, confidenceThreshold, modeShowCanvasDetect, showImgDetect]);
 
   // -----------------------End--watch-------------------------------------------
 
@@ -243,6 +406,34 @@ const InitComponent = () => {
 
     return [v1, v2];
   }
+  // function getWallVerticesAndCenterAndAngleFromBox(polygon) {
+  //   if (!polygon || polygon.length !== 4) return null;
+
+  //   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  //   const edges = [
+  //     [polygon[0], polygon[1]],
+  //     [polygon[1], polygon[2]],
+  //     [polygon[2], polygon[3]],
+  //     [polygon[3], polygon[0]],
+  //   ];
+
+  //   // Tìm cạnh dài nhất
+  //   const [v1, v2] = edges.reduce((longest, current) =>
+  //     dist(...current) > dist(...longest) ? current : longest
+  //   );
+
+  //   const center = {
+  //     x: (v1.x + v2.x) / 2,
+  //     y: (v1.y + v2.y) / 2,
+  //   };
+
+  //   const dx = v2.x - v1.x;
+  //   const dy = v2.y - v1.y;
+  //   const angleRad = Math.atan2(dy, dx);
+  //   const angleDeg = 360 - (angleRad * 180) / Math.PI;
+  //   return { center, angleDeg, v1, v2 };
+  // }
   function getWallVerticesAndCenterAndAngleFromBox(polygon) {
     if (!polygon || polygon.length !== 4) return null;
 
@@ -255,23 +446,52 @@ const InitComponent = () => {
       [polygon[3], polygon[0]],
     ];
 
-    // Tìm cạnh dài nhất
+    // Tìm cặp cạnh dài nhất (v1-v2 là trục dài của tường)
     const [v1, v2] = edges.reduce((longest, current) =>
       dist(...current) > dist(...longest) ? current : longest
     );
 
+    // Tính center
     const center = {
       x: (v1.x + v2.x) / 2,
       y: (v1.y + v2.y) / 2,
     };
 
+    // Tính angle
     const dx = v2.x - v1.x;
     const dy = v2.y - v1.y;
+    const length = Math.hypot(dx, dy);
     const angleRad = Math.atan2(dy, dx);
     const angleDeg = 360 - (angleRad * 180) / Math.PI;
 
-    return { center, angleDeg, v1, v2 };
+    // Tính độ dày: khoảng cách giữa 2 điểm không thuộc v1-v2
+    const otherPoints = polygon.filter(
+      (p) => (p.x !== v1.x || p.y !== v1.y) && (p.x !== v2.x || p.y !== v2.y)
+    );
+
+    // Vector pháp tuyến (vuông góc với tường)
+    const nx = -dy / length;
+    const ny = dx / length;
+
+    // Tính thickness bằng cách chiếu vector nối otherPoints[0] → v1 lên pháp tuyến
+    const thickness = Math.abs(
+      (otherPoints[0].x - v1.x) * nx + (otherPoints[0].y - v1.y) * ny
+    ) * 2; // nhân 2 vì là nửa chiều dày
+
+    console.log("thickness của tường=", thickness)
+
+    return {
+      center,
+      angleDeg,
+      angleRad,
+      v1,
+      v2,
+      thickness,
+      dir: { x: dx / length, y: dy / length },
+      normal: { x: nx, y: ny },
+    };
   }
+
 
 
   function isPolygonOverlap(polyA, polyB) {
@@ -364,7 +584,7 @@ const InitComponent = () => {
     const unitMToPixelCanvas = config?.unitMToPixelCanvas ?? 100;
     const results = [];
     for (const door of detectedDoors) {
-      console.log("door=", door)
+      // console.log("door=", door)
       if (!door || !Array.isArray(door.polygon) || door.polygon.length < 3) continue;
       const doorPoly = door.polygon;
       if (!doorPoly || doorPoly.length < 3) continue;
@@ -485,7 +705,7 @@ const InitComponent = () => {
       const doorPoly = door.polygon;
 
       if (!doorPoly || doorPoly.length < 3) continue;
-      console.log("voi door=", doorPoly)
+      // console.log("voi door=", doorPoly)
       let bestWall = null;
 
       for (const wall of walls) {
@@ -495,7 +715,7 @@ const InitComponent = () => {
 
         const wallPoly = wallToPolygon(v1, v2, wall.thickness ?? 10);
         const overlap = isPolygonOverlap(doorPoly, wallPoly);
-        console.log(`voi wall=${wall.startId} overlap=${overlap}`)
+        // console.log(`voi wall=${wall.startId} overlap=${overlap}`)
 
         if (overlap) {
           bestWall = wall;
@@ -517,7 +737,8 @@ const InitComponent = () => {
 
   function adjustDoorsWindowsToFitWalls(doors, walls) {
     const adjustedDoors = [];
-
+    console.log("doors=", doors)
+    console.log("walls=", walls)
     doors.forEach((door, idx) => {
       const dx1 = door.x;
       const dx2 = door.x + door.width;
@@ -526,6 +747,9 @@ const InitComponent = () => {
 
       let bestIoU = 0;
       let bestWall = null;
+
+      console.log("voi door=", door)
+
 
       walls.forEach((wall) => {
 
@@ -553,9 +777,10 @@ const InitComponent = () => {
       });
 
       if (bestWall) {
+        console.log("tim thay wall", bestWall)
         const wallIsHorizontal = bestWall.width >= bestWall.height;
         const adjustedDoor = { ...door };
-        console.log("bestWall", bestWall)
+        // console.log("bestWall", bestWall)
         adjustedDoor.wallId = bestWall.id
         adjustedDoor.dataOrigin = door
 
@@ -575,6 +800,532 @@ const InitComponent = () => {
 
     return adjustedDoors;
   }
+  function getPolygonCenter(polygon) {
+    const sum = polygon.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    return { x: sum.x / polygon.length, y: sum.y / polygon.length };
+  }
+  function distancePointToLine(point, lineStart, lineEnd) {
+    const { x: x0, y: y0 } = point;
+    const { x: x1, y: y1 } = lineStart;
+    const { x: x2, y: y2 } = lineEnd;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+
+    if (dx === 0 && dy === 0) {
+      // Đoạn thẳng suy biến thành điểm
+      const dx0 = x0 - x1;
+      const dy0 = y0 - y1;
+      return Math.sqrt(dx0 * dx0 + dy0 * dy0);
+    }
+
+    const numerator = Math.abs(dy * x0 - dx * y0 + x2 * y1 - y2 * x1);
+    const denominator = Math.sqrt(dx * dx + dy * dy);
+
+    return numerator / denominator;
+  }
+
+  function getWallThickness(wall) {
+    const [p1, p2, p3] = wall.polygon;
+    return distancePointToLine(p3, p1, p2); // chiều dày là khoảng cách điểm thứ 3 đến cạnh dài
+  }
+
+  function getLongDirection(polygon) {
+    const v0 = polygon[0];
+    const v1 = polygon[1];
+    return normalize({ x: v1.x - v0.x, y: v1.y - v0.y });
+  }
+
+  function getShortDirection(polygon) {
+    const v0 = polygon[0];
+    const v3 = polygon[3];
+    return normalize({ x: v3.x - v0.x, y: v3.y - v0.y });
+  }
+
+  function normalize(v) {
+    const len = Math.hypot(v.x, v.y);
+    return { x: v.x / len, y: v.y / len };
+  }
+
+  function getDistance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+  }
+
+  function rotatePointAround(p, center, angle) {
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos
+    };
+  }
+
+  function getPolygonRotation(polygon) {
+    const p0 = polygon[0], p1 = polygon[1];
+    return Math.atan2(p1.y - p0.y, p1.x - p0.x);
+  }
+  function rotatePolygon(polygon, angleRad, center = { x: 0, y: 0 }) {
+    const cos = Math.cos(angleRad);
+    const sin = Math.sin(angleRad);
+
+    return polygon.map(p => {
+      const dx = p.x - center.x;
+      const dy = p.y - center.y;
+
+      return {
+        x: center.x + dx * cos - dy * sin,
+        y: center.y + dx * sin + dy * cos,
+      };
+    });
+  }
+
+  // function transformDoorToWall(door, wallInfo) {
+  //   const { center: wallCenter, angleRad, thickness, dir } = wallInfo;
+
+  //   const doorCenter = getPolygonCenter(door.polygon);
+  //   const dx = wallCenter.x - doorCenter.x;
+  //   const dy = wallCenter.y - doorCenter.y;
+
+  //   // Dịch door đến center tường
+  //   let translated = door.polygon.map(p => ({
+  //     x: p.x + dx,
+  //     y: p.y + dy
+  //   }));
+
+  //   // Xoay cùng hướng tường
+  //   let rotated = rotatePolygon(translated, angleRad, wallCenter);
+
+  //   // Tính lại thickness
+  //   const newDoor = {
+  //     ...door,
+  //     polygon: rotated,
+  //     center: wallCenter,
+  //     angle: angleRad,
+  //     thickness: thickness
+  //   };
+
+  //   return newDoor;
+  // }
+  function expandPolygonAlongNormal(polygon, normal, offset) {
+    const { x: nx, y: ny } = normal;
+
+    // Dịch từng điểm ra 2 phía theo pháp tuyến để tạo polygon dày
+    const front = polygon.map(p => ({
+      x: p.x + nx * offset,
+      y: p.y + ny * offset,
+    }));
+    const back = polygon.slice().reverse().map(p => ({
+      x: p.x - nx * offset,
+      y: p.y - ny * offset,
+    }));
+
+    return [...front, ...back];
+  }
+  function makeDoorOuterPolygonFromV1V2(v1, v2, normal, thickness) {
+    const half = thickness / 2;
+    const nx = normal.x;
+    const ny = normal.y;
+
+    // Mở rộng vuông góc (đúng theo chiều dày)
+    const p1 = { x: v1.x + nx * half, y: v1.y + ny * half };
+    const p2 = { x: v2.x + nx * half, y: v2.y + ny * half };
+    const p3 = { x: v2.x - nx * half, y: v2.y - ny * half };
+    const p4 = { x: v1.x - nx * half, y: v1.y - ny * half };
+
+    return [p1, p2, p3, p4]; // đúng thứ tự, theo chiều kim đồng hồ
+  }
+
+  function transformDoorToWall(door, wallInfo) {
+    console.log("wallInfowallInfo=", wallInfo)
+    const { center: wallCenter, angleRad, thickness, dir: wallDir, normal, skeleton } = wallInfo;
+
+    const doorCenter = getPolygonCenter(door.polygon);
+    const dx = wallCenter.x - doorCenter.x;
+    const dy = wallCenter.y - doorCenter.y;
+
+    // Dịch polygon về đúng vị trí center của tường
+    let translated = door.polygon.map(p => ({
+      x: p.x + dx,
+      y: p.y + dy
+    }));
+
+    // === NEW: Kiểm tra hướng cửa ===
+    const doorInfo = getWallVerticesAndCenterAndAngleFromBox(door.polygon);
+    if (!doorInfo) return door; // bỏ qua nếu lỗi
+
+    const doorDir = doorInfo.dir;
+
+    // Tính dot product giữa 2 vector hướng
+    const dot = doorDir.x * wallDir.x + doorDir.y * wallDir.y;
+    const cosThreshold = Math.cos(Math.PI / 36); // ≈ 5 độ
+
+    let innerPolygon = translated;
+    if (Math.abs(dot) < cosThreshold) {
+      // Khác hướng: mới xoay
+      innerPolygon = rotatePolygon(translated, angleRad, wallCenter);
+    }
+
+    // === Tính outerPolygon bằng cách mở rộng polygon theo vector pháp tuyến ===
+    // 👉 Tính lại v1, v2 từ innerPolygon đã xoay
+    const doorInfo2 = getWallVerticesAndCenterAndAngleFromBox(_.cloneDeep(innerPolygon));
+    console.log("doorInfo2", doorInfo2)
+    console.log("thickness", thickness)
+    if (!doorInfo2) return door;
+
+    // outerPolygon đúng hướng cửa sau khi đã xoay
+    const outerPolygon = makeDoorOuterPolygonFromV1V2(
+      doorInfo.v1,
+      doorInfo.v2,
+      normal,
+      thickness
+    );
+    console.log("innerPolygon", innerPolygon)
+    console.log("outerPolygon", outerPolygon)
+
+    const newDoor = {
+      ...door,
+      polygon: door.polygon,
+      innerPolygon: innerPolygon,
+      outerPolygon: outerPolygon,
+      center: wallCenter,
+      angle: angleRad,
+      thickness: thickness,
+    };
+
+    return newDoor;
+  }
+
+
+  function getClosestPointOnLine(point, lineStart, lineEnd) {
+    const { x: x1, y: y1 } = lineStart;
+    const { x: x2, y: y2 } = lineEnd;
+    const { x: px, y: py } = point;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) return { x: x1, y: y1 }; // đoạn thẳng suy biến
+
+    // Tính hệ số t để nội suy
+    let t = ((px - x1) * dx + (py - y1) * dy) / lengthSquared;
+    t = Math.max(0, Math.min(1, t)); // giới hạn trong đoạn thẳng
+
+    return {
+      x: x1 + t * dx,
+      y: y1 + t * dy,
+    };
+  }
+  // 👉 Hàm phụ
+  function distance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+  }
+  function getSnapPointToWall22(door, wall, snapRadius = 50) {
+    const doorCenter = getPolygonCenter(door.polygon);
+
+    let minDist = Infinity;
+    let closest = null;
+    let angleRad = 0;
+    let dir = null;
+
+    for (let i = 0; i < wall.polygon.length; i++) {
+      const a = wall.polygon[i];
+      const b = wall.polygon[(i + 1) % wall.polygon.length];
+
+      const pt = getClosestPointOnLine(doorCenter, a, b);
+      const dist = Math.hypot(doorCenter.x - pt.x, doorCenter.y - pt.y);
+
+      if (dist < minDist) {
+        minDist = dist;
+        closest = pt;
+
+        const wallDir = { x: b.x - a.x, y: b.y - a.y };
+        const wallLength = Math.hypot(wallDir.x, wallDir.y);
+        dir = { x: wallDir.x / wallLength, y: wallDir.y / wallLength };
+        angleRad = Math.atan2(dir.y, dir.x);
+      }
+    }
+
+    if (minDist > snapRadius) return null;
+
+    const thickness = Math.min(
+      distance(wall.polygon[0], wall.polygon[3]),
+      distance(wall.polygon[1], wall.polygon[2])
+    );
+
+    return {
+      center: closest,
+      angleRad,
+      thickness,
+      dir,
+      distance: minDist,
+    };
+  }
+  // function getSnapPointToWall(door, wall, snapRadius = 50) {
+  //   const poly = wall.polygon;
+  //   if (!poly || poly.length !== 4) return null;
+
+  //   // Xác định 2 cặp cạnh đối
+  //   const d01 = distance(poly[0], poly[1]);
+  //   const d12 = distance(poly[1], poly[2]);
+  //   const d23 = distance(poly[2], poly[3]);
+  //   const d30 = distance(poly[3], poly[0]);
+
+  //   // Tìm cặp đối nhau có chiều dài lớn hơn => là chiều dài tường
+  //   const isHorizontal = d01 > d30;
+
+  //   // Chọn 2 điểm để xác định trục chính tường
+  //   const edgeA = isHorizontal ? poly[0] : poly[0];
+  //   const edgeB = isHorizontal ? poly[1] : poly[3];
+  //   const edgeC = isHorizontal ? poly[3] : poly[1];
+  //   const edgeD = isHorizontal ? poly[2] : poly[2];
+
+  //   // Trung điểm 2 cạnh: tạo trục chính nằm ở giữa
+  //   const mid1 = midpoint(edgeA, edgeC);
+  //   const mid2 = midpoint(edgeB, edgeD);
+
+  //   // Hướng và góc
+  //   const dirVec = { x: mid2.x - mid1.x, y: mid2.y - mid1.y };
+  //   const length = Math.hypot(dirVec.x, dirVec.y);
+  //   const dir = { x: dirVec.x / length, y: dirVec.y / length };
+  //   const angleRad = Math.atan2(dir.y, dir.x);
+
+  //   // Tâm cửa
+  //   const doorCenter = getPolygonCenter(door.polygon);
+
+  //   // Tính điểm gần nhất trên trục chính
+  //   const closest = getClosestPointOnLine(doorCenter, mid1, mid2);
+  //   const dist = Math.hypot(doorCenter.x - closest.x, doorCenter.y - closest.y);
+
+  //   if (dist > snapRadius) return null;
+
+  //   // Độ dày tường là khoảng cách giữa 2 cặp cạnh ngắn hơn
+  //   const thickness = Math.min(d01, d12, d23, d30);
+
+  //   return {
+  //     center: closest,
+  //     angleRad,
+  //     thickness,
+  //     dir,
+  //     distance: dist,
+  //   };
+  // }
+
+  // Helper
+  function distance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+  }
+
+  function midpoint(p1, p2) {
+    return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  }
+
+  function getSnapPointToWall(door, wall, snapRadius = 50) {
+    const polygon = wall.polygon;
+    if (!polygon || polygon.length !== 4) return null;
+    if (!wall.skeleton || !wall.skeleton.v1 || !wall.skeleton.v2) return null;
+
+    const v1 = wall.skeleton.v1;
+    const v2 = wall.skeleton.v2;
+
+    // vector xương tường
+    const dx = v2.x - v1.x;
+    const dy = v2.y - v1.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return null;
+
+    const dir = { x: dx / len, y: dy / len }; // hướng
+    const angleRad = Math.atan2(dir.y, dir.x);
+
+    // Tâm cửa
+    const doorCenter = getPolygonCenter(door.polygon);
+
+    // vector vuông góc (normal)
+    const normal = { x: -dir.y, y: dir.x };
+
+    // Tạo đường qua tâm cửa theo hướng vuông góc
+    const p3 = {
+      x: doorCenter.x - normal.x * 1000,
+      y: doorCenter.y - normal.y * 1000,
+    };
+    const p4 = {
+      x: doorCenter.x + normal.x * 1000,
+      y: doorCenter.y + normal.y * 1000,
+    };
+
+    // Tính giao điểm giữa v1-v2 và p3-p4
+    const center = getLineIntersection(v1, v2, p3, p4);
+    if (!center) return null;
+
+    const dist = Math.hypot(center.x - doorCenter.x, center.y - doorCenter.y);
+    if (dist > snapRadius) return null;
+
+    // const thickness = getWallThicknessFromPolygon(polygon); // hoặc bạn truyền sẵn
+    console.log("getSnapPointToWall wall", wall)
+    return {
+      thickness: wall.thickness || WALL_WIDTH,
+      normal: wall.normal,
+      center,
+      angleRad,
+      dir,
+      distance: dist,
+      skeleton: wall.skeleton,
+    };
+  }
+  function getLineIntersection(p1, p2, p3, p4) {
+    const A1 = p2.y - p1.y;
+    const B1 = p1.x - p2.x;
+    const C1 = A1 * p1.x + B1 * p1.y;
+
+    const A2 = p4.y - p3.y;
+    const B2 = p3.x - p4.x;
+    const C2 = A2 * p3.x + B2 * p3.y;
+
+    const det = A1 * B2 - A2 * B1;
+    if (Math.abs(det) < 1e-6) return null;
+
+    return {
+      x: (B2 * C1 - B1 * C2) / det,
+      y: (A1 * C2 - A2 * C1) / det,
+    };
+  }
+  // function getSnapPointToWall(door, wall, snapRadius = 50) {
+  //   const polygon = wall.polygon;
+  //   if (!polygon || polygon.length !== 4) return null;
+
+  //   // Dùng hàm đã có để lấy xương tường và các thông tin liên quan
+  //   const wallData = getWallVerticesAndCenterAndAngleFromBox(polygon);
+  //   if (!wallData) return null;
+
+  //   const { v1, v2, dir, angleRad, thickness } = wallData;
+  //   console.log("wallData",wallData)
+
+  //   // Tính tâm cửa
+  //   const doorCenter = getPolygonCenter(door.polygon);
+
+  //   // Vector pháp tuyến với tường (vuông góc với xương)
+  //   const normal = { x: -dir.y, y: dir.x };
+
+  //   // Tạo đường đi qua tâm cửa theo hướng pháp tuyến
+  //   const p3 = {
+  //     x: doorCenter.x - normal.x * 1000,
+  //     y: doorCenter.y - normal.y * 1000,
+  //   };
+  //   const p4 = {
+  //     x: doorCenter.x + normal.x * 1000,
+  //     y: doorCenter.y + normal.y * 1000,
+  //   };
+
+  //   // Giao điểm giữa xương tường (v1–v2) và đường vuông góc qua tâm cửa
+  //   const snapPoint = getLineIntersection(v1, v2, p3, p4);
+  //   if (!snapPoint) return null;
+
+  //   // Khoảng cách từ tâm cửa đến điểm snap (có thể dùng để ưu tiên hoặc kiểm tra)
+  //   const dist = Math.hypot(snapPoint.x - doorCenter.x, snapPoint.y - doorCenter.y);
+  //   if (dist > snapRadius) return null;
+
+  //   return {
+  //     center: snapPoint,   // điểm để đặt lại tâm polygon cửa
+  //     angleRad,            // góc để xoay polygon cửa
+  //     dir,                 // hướng tường (unit vector)
+  //     thickness,           // độ dày tường
+  //     distance: dist       // khoảng cách để sắp xếp ưu tiên
+  //   };
+  // }
+
+
+
+
+
+
+
+
+  function polygonsIntersect(polyA, polyB) {
+    // Dữ liệu đầu vào dạng [[[x1, y1], [x2, y2], ...]]
+    const shapeA = [polyA.map(p => [p.x, p.y])];
+    const shapeB = [polyB.map(p => [p.x, p.y])];
+
+    const result = polygonClipping.intersection(shapeA, shapeB);
+    return result.length > 0;
+  }
+  function adjustPredictedDoorsToWalls({ doors,
+    walls,
+    snapRadius = SNAP_DISTANCE,
+    existingDoors
+  }) {
+    const predictedDoor = _.cloneDeep(doors) || []
+    const wallArr = _.cloneDeep(walls) || []
+
+    const validDoors = [];
+
+    let walljsonarr = []
+    for (const wall of wallArr) {
+      walljsonarr.push(wall.polygon)
+    }
+    // console.log("walljsonarr=", JSON.stringify(walljsonarr))
+    for (const door of predictedDoor) {
+      let targetWall = null;
+      let wallInfo = null;
+      let minDist = Infinity;
+      console.log("voi door=", door)
+      for (const wall of wallArr) {
+        const intersects = polygonsIntersect(door.polygon, wall.polygon);
+        console.log("intersects=", intersects)
+
+        if (!intersects) continue;
+        const snap = getSnapPointToWall(door, wall, snapRadius);
+        if (!snap) continue; // không đủ gần thì bỏ qua luôn
+        // ✅ Nếu có giao thì chọn (ưu tiên cái gần nhất)
+        // if (snap.distance < minDist) {
+        //   minDist = snap.distance;
+        //   targetWall = wall;
+        //   wallInfo = snap;
+        //   console.log(">>> Tường GIAO, snap:", snap);
+        // }
+        console.log("snap=", snap)
+        minDist = snap.distance;
+        targetWall = wall;
+        wallInfo = snap;
+        if (targetWall) {
+          break;
+        }
+      }
+
+      console.log("tim thay targetWall=", targetWall)
+      console.log("tim thay wallInfo=", wallInfo)
+      if (!targetWall || !wallInfo) continue;
+
+      // 3. Biến đổi cửa để trùng hướng tường, đặt tại vị trí snap
+      let newDoor = transformDoorToWall(_.cloneDeep(door), _.cloneDeep(wallInfo));
+
+      // // 4. Kiểm tra cửa có nằm trong polygon tường theo chiều dài (bỏ qua độ dày)
+      // if (!isPolygonInsideWithoutThickness(newDoor.polygon, targetWall.polygon)) continue;
+
+      // console.log("ko va cham voi cua theo chieu dai")
+
+      // // 5. Kiểm tra cửa không chạm cửa đã đặt
+      // if (intersectsAny(newDoor.polygon, validDoors.map(d => d.polygon))) continue;
+
+      // // 6. Gán thông tin và thêm vào validDoors
+
+
+      console.log("newDoorsffd=", newDoor)
+
+      newDoor.wallId = targetWall.id;
+      newDoor.thickness = getWallThickness(targetWall); // hoặc wallInfo.thickness nếu có
+      newDoor.dataOrigin = door
+      validDoors.push(newDoor);
+    }
+
+    return validDoors;
+  }
+
+  useEffect(() => {
+    console.log("✅ vertices cập nhật xong:", vertices);
+
+  }, [vertices]);
   async function updateDataHouse() {
 
     const predictions = detectedRes?.predictions.filter(item => {
@@ -598,16 +1349,17 @@ const InitComponent = () => {
       offsetYGrid = -(window.innerHeight / 2 - gridExtent)
     } catch { }
     if (predictions) {
-      const predictions_tem = predictions.map(p => {
+      predictions.map(p => {
         const x_start = p.x - p.width / 2;
         const y_start = p.y - p.height / 2;
         const x_start_offset = x_start + offsetXGrid;
         const x_end_offset = x_start + p.width + offsetXGrid;
         const y_start_offset = y_start + offsetYGrid;
         const y_end_offset = y_start + p.height + offsetYGrid;
-
+        let wallId = uuidv4();
         let dataT = {
           ...p,
+          id: wallId,
           x: x_start,
           y: y_start,
           polygon: [
@@ -617,6 +1369,7 @@ const InitComponent = () => {
             { x: x_end_offset, y: y_start_offset },         // bottom-left
           ]
         };
+
         if (dataT.class == 'door') {
           predictionDoor.push(dataT)
         }
@@ -634,7 +1387,7 @@ const InitComponent = () => {
     if (predictWall && predictWall.length) {
       for (let i = 0; i < predictWall.length; i++) {
         if (predictWall[i].polygon && predictWall[i].polygon.length && predictWall[i].polygon.length >= 3) {
-          const [v1, v2] = getWallVerticesFromBox(predictWall[i].polygon);
+          const { v1, v2, thickness, normal } = getWallVerticesAndCenterAndAngleFromBox(_.cloneDeep(predictWall[i].polygon));
           const v1_vertice = _.merge(v1, {
             id: uuidv4() + Math.random(),
             x: v1.x,
@@ -646,84 +1399,42 @@ const InitComponent = () => {
             y: v2.y,
           })
           verticesArr = [...verticesArr, v1_vertice, v2_vertice]
-          setVertices(verticesArr);
-          let wallId = uuidv4();
-          predictWall[i].id = wallId;
+
+          let newWallId = uuidv4();
           const newWalls = {
-            id: wallId,
+            id: predictWall[i].id || newWallId,
             startId: v1_vertice.id,
             endId: v2_vertice.id,
-            thickness: WALL_WIDTH,
+            thickness: thickness || WALL_WIDTH,
             height: 2.4 * unitMToPixelCanvas,
+            polygon: predictWall[i].polygon || [],
             type: "wall",
             name: "Wall",
+            skeleton: { v1, v2 },
+            normal: normal,
           }
           wallArr = [...wallArr, newWalls]
-          setWalls(wallArr);
+
         }
       }
+      setVertices(verticesArr);
+      setWalls(wallArr);
     }
-    // if (predictionDoor && predictionDoor.length) {
-    //   // let verticesArr = []
-    //   // let wallArr = []
-    //   for (let i = 0; i < predictionDoor.length; i++) {
-    //     // if (predictionDoor[i].polygon && predictionDoor[i].polygon.length && predictionDoor[i].polygon.length >= 3) {
-    //     //   const [v1, v2] = getWallVerticesFromBox(predictionDoor[i].polygon);
-    //     //   const v1_vertice = _.merge(v1, {
-    //     //     id: uuidv4() + Math.random(),
-    //     //     x: v1.x,
-    //     //     y: v1.y,
-    //     //   })
-    //     //   const doorData = {
-    //     //     id: uuidv4(),
-    //     //     wallId: snapInfo.wallId,
-    //     //     x: snapInfo.x,
-    //     //     y: snapInfo.y,
-    //     //     angle: snapInfo.angle,
-    //     //     center,
-    //     //     height: 1.8 * unitMToPixelCanvas,
-    //     //     // height: 1 * unitMToPixelCanvas,
-    //     //     type: "door",
-    //     //     rect: {
-    //     //       x: snapInfo.x,
-    //     //       y: snapInfo.y,
-    //     //       width: doorLength,
-    //     //       height: doorHeight,
-    //     //     },
-    //     //     outerPolygon,
-    //     //     innerPolygon,
-    //     //   };
-    //     // }
-    //   }
-    //   console.log("predictionDoor=", predictionDoor)
-    //   console.log("wallArr[0]=", wallArr[0])
-    //   // const validDoors = filterValidDetectedDoorsOptimized(
-    //   //   {
-    //   //     detectedDoors: predictionDoor ?? [],
-    //   //     walls: wallArr,
-    //   //     vertices,
-    //   //     existingDoors: [],
-    //   //     existingWindows: [],
-    //   //     snapRadius: SNAP_DISTANCE,
-    //   //     config: DOOR_CONFIG,
-    //   //   }
-    //   // );
 
-    //   const validDoors = filterValidDetectedDoorsOptimized({
-    //     detectedDoors: predictionDoor ?? [],
-    //     walls: wallArr,                   // danh sách tường hiện có
-    //     vertices,                         // danh sách đỉnh của tường
-    //     existingDoors: [],                // nếu chưa có cửa, bạn để mảng rỗng
-    //     existingWindows: [],              // tương tự với cửa sổ
-    //     snapRadius: SNAP_DISTANCE,        // bán kính snap (ví dụ 50)
-    //     config: DOOR_CONFIG,              // cấu hình cửa
-    //   });
-
-    //   console.log("validDoors=", validDoors)
-    // }
     let doorsArr = []
     if (predictionDoor && predictionDoor.length) {
-      const doorsRequired = adjustDoorsWindowsToFitWalls(predictionDoor, predictWall);
+      // const doorsRequired = adjustDoorsWindowsToFitWalls(predictionDoor, predictWall);
+      const predictionDoorTest = [predictionDoor[4]]
+      const wallsTest = [wallArr[3]]
+      const doorsRequired = adjustPredictedDoorsToWalls({
+        // doors: predictionDoorTest,
+        // walls: wallsTest,
+        doors: predictionDoor,
+        walls: wallArr,
+        snapRadius: SNAP_DISTANCE, // hoặc tùy chỉnh khoảng cách snap
+        existingDoors: [] // nếu muốn tránh đè lên cửa có sẵn
+      });
+      console.log("doorsRequired", doorsRequired)
       if (doorsRequired && doorsRequired.length) {
         for (let i = 0; i < doorsRequired.length; i++) {
           const p = doorsRequired[i]
@@ -735,14 +1446,7 @@ const InitComponent = () => {
           const y_start_offset = y_start + offsetYGrid;
           const y_end_offset = y_start + p.height + offsetYGrid;
 
-          let outerPolygon = [
-            { x: x_start_offset, y: y_start_offset },         // top-left
-            { x: x_start_offset, y: y_end_offset },        // top-right
-            { x: x_end_offset, y: y_end_offset },        // bottom-right
-            { x: x_end_offset, y: y_start_offset },         // bottom-left
-          ]
           const { center, angleDeg, v1, v2 } = getWallVerticesAndCenterAndAngleFromBox(doorOrigin.polygon);
-
           const v1_vertice = _.merge(v1, {
             id: uuidv4() + Math.random(),
             x: v1.x,
@@ -771,11 +1475,12 @@ const InitComponent = () => {
               width: p.width,
               height: p.height,
             },
-            outerPolygon: doorOrigin.polygon,
-            innerPolygon: doorOrigin.polygon,
+            // outerPolygon: doorOrigin.polygon,
+            // innerPolygon: doorOrigin.polygon,
+            outerPolygon: p.outerPolygon,
+            innerPolygon: p.innerPolygon,
           };
           doorsArr = [...doorsArr, doorData]
-
         }
 
       }
@@ -784,24 +1489,17 @@ const InitComponent = () => {
     }
     let windowsArr = []
     if (predictionWindow && predictionWindow.length) {
-      const doorsRequired = adjustDoorsWindowsToFitWalls(predictionWindow, predictWall);
-      if (doorsRequired && doorsRequired.length) {
-        for (let i = 0; i < doorsRequired.length; i++) {
-          const p = doorsRequired[i]
+      const windowRequired = adjustPredictedDoorsToWalls({
+        doors: predictionWindow,
+        walls: wallArr,
+        snapRadius: SNAP_DISTANCE, // hoặc tùy chỉnh khoảng cách snap
+        existingDoors: [] // nếu muốn tránh đè lên cửa có sẵn
+      });
+      if (windowRequired && windowRequired.length) {
+        for (let i = 0; i < windowRequired.length; i++) {
+          const p = windowRequired[i]
           const windowOrigin = p.dataOrigin
-          const x_start = p.x - p.width / 2;
-          const y_start = p.y - p.height / 2;
-          const x_start_offset = x_start + offsetXGrid;
-          const x_end_offset = x_start + p.width + offsetXGrid;
-          const y_start_offset = y_start + offsetYGrid;
-          const y_end_offset = y_start + p.height + offsetYGrid;
 
-          let outerPolygon = [
-            { x: x_start_offset, y: y_start_offset },         // top-left
-            { x: x_start_offset, y: y_end_offset },        // top-right
-            { x: x_end_offset, y: y_end_offset },        // bottom-right
-            { x: x_end_offset, y: y_start_offset },         // bottom-left
-          ]
           const { center, angleDeg, v1, v2 } = getWallVerticesAndCenterAndAngleFromBox(windowOrigin.polygon);
 
           const v1_vertice = _.merge(v1, {
@@ -814,9 +1512,6 @@ const InitComponent = () => {
             x: v2.x,
             y: v2.y,
           })
-          // verticesArr = [...verticesArr, v1_vertice, v2_vertice]
-          // setVertices(verticesArr);
-
           const windowdata = {
             id: uuidv4(),
             wallId: p.wallId,
@@ -833,15 +1528,15 @@ const InitComponent = () => {
               width: p.width,
               height: p.height,
             },
-            outerPolygon: windowOrigin.polygon,
-            innerPolygon: windowOrigin.polygon,
+            outerPolygon: p.outerPolygon,
+            innerPolygon: p.innerPolygon,
           };
           windowsArr = [...windowsArr, windowdata]
 
         }
 
       }
-      console.log("windowsArr=", windowsArr)
+      // console.log("windowsArr=", windowsArr)
       setWindows(windowsArr);
     }
   }
@@ -876,14 +1571,15 @@ const InitComponent = () => {
         body: formData,
       });
       const responseFM = await response.json();
-      console.log("responseFM=", responseFM)
+      // console.log("responseFM=", responseFM)
       if (responseFM && responseFM.data) {
         setdetectedRes(responseFM.data)
       }
     } catch { }
 
   }
-  const [age, setage] = useState(10)
+
+
   return (
     <>
       {showFormDetect ? (
@@ -940,11 +1636,31 @@ const InitComponent = () => {
                 </FormControl>
                 <Button size='small' variant="contained" onClick={detectWallDoor}>Detection</Button>
                 <Button size='small' variant="contained" onClick={updateDataHouse}>Update House</Button>
+                <div>
+                  <FormControlLabel
+                    control={<Checkbox checked={showRuler}
+                      onChange={(e) => setshowRuler(e.target.checked)} />}
+                    label="Show Ruler:"
+                    labelPlacement="start" // ← Label nằm bên trái
+                  />
+                </div>
               </div>
               <div className="flex items-start justify-between">
-                <div className="predict-img min-w-[500px] h-[500px] border mr-4 p-2">
+                <div className="relative predict-img min-w-[500px] h-[500px] border mr-4 p-2">
                   {/* <img src={base64ImgDetect?.imgbase64} /> */}
-                  <canvas ref={canvasbase64ImgDetect} width="500" height="500" className="" />
+                  {/* <canvas className="absolute top-0 left-0 z-[1]" ref={canvasbase64ImgDetect} width="500" height="500" /> */}
+                  {/* Canvas thước đo tương tác */}
+                  <Stage width={500} height={500} className="absolute top-0 left-0 z-[1]">
+                    <Layer>
+                      {konvaImage && showImgDetect && (
+                        <Image image={konvaImage} width={500} height={500} />
+                      )}
+
+                      {/* Boxes */}
+                    </Layer>
+                    {drawPredictionsCanvasConverted()}
+                  </Stage>
+
                 </div>
                 <div className="predict-container-1 border  p-2">
                   <div className="predict-container-param1">

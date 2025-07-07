@@ -19,6 +19,7 @@ export const EditorProvider = ({ children }) => {
   const modelThreeCommonRef = useRef({});
   const [showFormDetect, setshowFormDetect] = useState(true)
   const canvasLayout2dRef = useRef()
+  const [pixelPerMeter, setPixelPerMeter] = useState(100);
 
   return (
     <EditorContext.Provider
@@ -40,6 +41,7 @@ export const EditorProvider = ({ children }) => {
         modelThreeCommonRef,
         showFormDetect, setshowFormDetect,
         canvasLayout2dRef,
+        pixelPerMeter, setPixelPerMeter,
 
       }}
     >

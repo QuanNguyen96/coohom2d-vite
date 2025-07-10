@@ -332,7 +332,6 @@ const CanvasGridKonva = () => {
 
     const isDifferent = JSON.stringify(walls) !== JSON.stringify(newWalls);
     if (isDifferent) setWalls(newWalls);
-    console.log("watch walls", walls)
   }, [walls, vertices]);
 
 
@@ -1453,17 +1452,11 @@ const CanvasGridKonva = () => {
                   fill="rgba(0, 0, 255, 0.2)" // tô màu bên trong
                 />
               })()
-            }
-            {
+            } */}
+            {/* {
               (() => {
                 const doors = [
-                  { x: 3309, y: 3656 }
-                  ,
-                  { x: 3309, y: 3665 }
-                  ,
-                  { x: 3371, y: 3665 }
-                  ,
-                  { x: 3371, y: 3656 }
+            {"x":3085.5,"y":3218.5},{"x":3136.5,"y":3218.5},{"x":3136.5,"y":3201.5},{"x":3085.5,"y":3201.5}
 
 
                 ];
@@ -1475,14 +1468,16 @@ const CanvasGridKonva = () => {
                   fill="rgba(0, 0, 255, 0.2)" // tô màu bên trong
                 />
               })()
-            }
-            {
+            } */}
+            {/* {
               (() => {
                 const center = [
 
-                  { x: 3340, y: 3664.5 },
-                  { x: 3084, y: 3664.5 },
-                  { x: 3464, y: 3664.5 },
+                  // { x: 3340, y: 3664.5 },
+
+
+                  { x: 3136.5, y: 3210 },
+                  { x: 3085.5, y: 3210 }
                 ];
                 return center.map((point, index) => (
                   <Circle

@@ -1,10 +1,12 @@
+import { useSelector, useDispatch } from 'react-redux'
 import { Rnd } from 'react-rnd';
 import _ from 'lodash';
 import { CSG } from 'three-csg-ts';
-import { Canvas, useThree, useFrame, useLoader } from '@react-three/fiber';
-import { OrbitControls, Text, useHelper, Environment, OrthographicCamera, useGLTF } from '@react-three/drei';
+import { Canvas, useThree, useFrame, useLoader, extend } from '@react-three/fiber';
+import { OrbitControls, Text, useHelper, Environment, OrthographicCamera, useGLTF, Sky, shaderMaterial } from '@react-three/drei';
 import { useEditor } from '../../context/EditorContext';
 import * as THREE from 'three';
+import { RiDragMove2Fill } from "react-icons/ri";
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { DoubleSide, PointLightHelper } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
@@ -17,11 +19,42 @@ function Box() {
     </mesh>
   );
 }
+const GridFadeMaterial = shaderMaterial(
+  {
+    uColor: new THREE.Color('#ffffff'),
+    uFadeStart: 300,
+    uFadeEnd: 1200,
+    uCameraPosition: new THREE.Vector3(),
+  },
+  `
+    varying vec3 vWorldPosition;
+    void main() {
+      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+      vWorldPosition = worldPosition.xyz;
+      gl_Position = projectionMatrix * viewMatrix * worldPosition;
+    }
+  `,
+  `
+    uniform vec3 uColor;
+    uniform float uFadeStart;
+    uniform float uFadeEnd;
+    uniform vec3 uCameraPosition;
+    varying vec3 vWorldPosition;
+
+    void main() {
+      float dist = distance(vWorldPosition, uCameraPosition);
+      float alpha = 1.0 - smoothstep(uFadeStart, uFadeEnd, dist);
+      gl_FragColor = vec4(uColor, alpha);
+    }
+  `
+);
+extend({ GridFadeMaterial })
 
 
 
 
 export default function ResizableMovableBox() {
+  const dispatch = useDispatch()
   const {
     mode,
     setMode,
@@ -34,16 +67,18 @@ export default function ResizableMovableBox() {
     windows, setWindows,
     doors,
     setDoors,
+    unitMToPixelCanvas,
     gridLayout3d, setGridLayout3d,
     modelThreeCommonRef,
   } = useEditor();
+  const countClickUpdateFLoorplan2d = useSelector((state) => state.detectImg2d.countClickUpdateFloorplan2d)
   const cameraRef = useRef()
   const sceneRef = useRef()
-  const [positionGrid, setPositionGrid] = useState({ startX: 0, startZ: 0, endX: 500, endZ: 500 })
-
-  function loadStoreModel() {
+  const [positionGrid, setPositionGrid] = useState({ startX: 0, startZ: 0, endX: 10000, endZ: 10000 })
+  const OrbitControlsRef = useRef();
+  function LoadStoreModel() {
     const { scene } = useGLTF('/models/source/window.glb'); // hoặc từ URL
-    return <primitive object={scene} />;
+    return <primitive object={scene} position={[(positionGrid.startX + positionGrid.endX) / 2, 0, (positionGrid.startZ + positionGrid.endZ) / 2]} />;
   }
   function usePrevious(value) {
     const ref = useRef();
@@ -54,8 +89,63 @@ export default function ResizableMovableBox() {
   }
   const wallsRefOld = usePrevious(walls);
   useEffect(() => {
-    // console.log("wallsRefOld=", wallsRefOld)
   }, [wallsRefOld])
+
+  useEffect(() => {
+    try {
+      if (!walls || !walls.length) return;
+      let polygons = []
+      let gridMinX = Infinity;
+      let gridMaxX = -Infinity;
+      let gridMinZ = Infinity;
+      let gridMaxZ = -Infinity;
+      let allPoints = []
+      for (let i = 0; i < walls.length; i++) {
+        if (walls[i].polygon && walls[i].polygon.length) {
+          polygons = _.union(polygons, walls[i].polygon)
+          allPoints = allPoints.concat(walls[i].polygon); // gom tất cả điểm lại thành 1 mảng phẳng
+        }
+      }
+      gridMinX = _.minBy(allPoints, 'x')?.x ?? 0;
+      gridMaxX = _.maxBy(allPoints, 'x')?.x ?? 0;
+      gridMinZ = _.minBy(allPoints, 'y')?.y ?? 0;
+      gridMaxZ = _.maxBy(allPoints, 'y')?.y ?? 0;
+      if (gridMinX == Infinity || gridMaxX == -Infinity || gridMinZ == Infinity || gridMaxZ == -Infinity) return;
+      // console.log(`gridMinX=${gridMinX} gridMaxX=${gridMaxX} gridMinZ=${gridMinZ} gridMaxZ=${gridMaxZ}`)
+      let gridSizeX = Math.abs(gridMinX - gridMaxX) + 20
+      let gridSizeZ = Math.abs(gridMinZ - gridMaxZ) + 20
+      gridSizeX = gridSizeX <= 500 ? 500 : gridSizeX
+      gridSizeZ = gridSizeZ <= 500 ? 500 : gridSizeZ
+      setGridLayout3d([gridSizeX, gridSizeZ])
+      const startX = gridMinX - 10;
+      let endX = gridMaxX + 10;
+      endX = Math.abs(endX - startX) < 500 ? startX + 500 : endX
+      const startZ = gridMinZ - 10;
+      let endZ = gridMaxZ + 10;
+      endZ = Math.abs(endZ - startZ) < 500 ? startZ + 500 : endZ
+      // setPositionGrid({ startX: startX, startZ: startZ, endX: endX, endZ: endZ })
+      if (walls && walls.length && cameraRef.current) {
+        const camera = cameraRef.current
+        const centerX = (startX + endX) / 2;
+        const centerZ = (startZ + endZ) / 2;
+        // camera.position.set(endX + 4 * unitMToPixelCanvas, 4 * unitMToPixelCanvas, endZ + 4 * unitMToPixelCanvas);
+
+        camera.position.set((startX + endX) / 2, 5 * unitMToPixelCanvas, endZ + 7 * unitMToPixelCanvas);
+        camera.lookAt(new THREE.Vector3(centerX, 0, centerZ));
+        camera.updateProjectionMatrix();
+        const controls = OrbitControlsRef.current
+        if (controls) {
+          controls.target.set(
+            centerX,
+            1.2 * unitMToPixelCanvas,
+            centerZ,
+          );
+          controls.update();
+        }
+      }
+
+    } catch { }
+  }, [countClickUpdateFLoorplan2d])
   useEffect(() => {
     try {
       if (!walls || !walls.length) return;
@@ -89,19 +179,28 @@ export default function ResizableMovableBox() {
       const startZ = gridMinZ - 10;
       let endZ = gridMaxZ + 10;
       endZ = Math.abs(endZ - startZ) < 500 ? startZ + 500 : endZ
-      setPositionGrid({ startX: startX, startZ: startZ, endX: endX, endZ: endZ })
+      // setPositionGrid({ startX: startX, startZ: startZ, endX: endX, endZ: endZ })
 
-      // console.log("bat dau tu diem", [startX, 100, startZ])
-      // console.log("nhin vao diem", new THREE.Vector3(centerX, 0, centerZ))
-      // console.log("wallsRefOld=", wallsRefOld)
-      if (walls && walls.length && (!wallsRefOld || !wallsRefOld.length) && cameraRef.current) {
+      if (walls && walls.length && (!wallsRefOld || !wallsRefOld.length || (wallsRefOld.length && wallsRefOld.length <= 2)) && cameraRef.current) {
         const camera = cameraRef.current
         const centerX = (startX + endX) / 2;
         const centerZ = (startZ + endZ) / 2;
-        // console.log("lan dau update camera vao day nhe")
-        camera.position.set(endX, 100, endZ);
+        console.log("da vao day roi nhes")
+        console.log("startX=", startX)
+        console.log("endX=", endX)
+        console.log("centerX=", centerX)
+        camera.position.set((startX + endX) / 2, 5 * unitMToPixelCanvas, endZ + 7 * unitMToPixelCanvas);
         camera.lookAt(new THREE.Vector3(centerX, 0, centerZ));
         camera.updateProjectionMatrix();
+        const controls = OrbitControlsRef.current
+        if (controls) {
+          controls.target.set(
+            centerX,
+            1.2 * unitMToPixelCanvas,
+            centerZ,
+          );
+          controls.update();
+        }
       }
 
     } catch { }
@@ -138,6 +237,48 @@ export default function ResizableMovableBox() {
       </lineSegments>
     );
   }
+  // function RectGrid({
+  //   startX = -5000,
+  //   endX = 5000,
+  //   startZ = -5000,
+  //   endZ = 5000,
+  //   stepX = 100,
+  //   stepZ = 100,
+  //   color = '#ffffff',
+  //   opacity = 1,
+  //   fadeStart = 100,     // ✅ thêm ở đây
+  //   fadeEnd = 1000,       // ✅ và ở đây
+  //   camera = cameraRef.current,
+  // }) {
+  //   const geometry = useMemo(() => {
+  //     const positions = [];
+
+  //     for (let z = startZ; z <= endZ; z += stepZ) {
+  //       positions.push(startX, 0, z, endX, 0, z);
+  //     }
+  //     for (let x = startX; x <= endX; x += stepX) {
+  //       positions.push(x, 0, startZ, x, 0, endZ);
+  //     }
+
+  //     const geo = new THREE.BufferGeometry();
+  //     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  //     return geo;
+  //   }, [startX, endX, startZ, endZ, stepX, stepZ]);
+
+  //   return (
+  //     <lineSegments geometry={geometry}>
+  //       {/* <lineBasicMaterial color={color} transparent opacity={opacity} /> */}
+  //       <gridFadeMaterial
+  //         uColor={new THREE.Color(color)}
+  //         uFadeStart={fadeStart}
+  //         uFadeEnd={fadeEnd}
+  //         uCameraPosition={camera?.position}
+  //         transparent
+  //         depthWrite={false}
+  //       />
+  //     </lineSegments>
+  //   );
+  // }
   function fitModelToBox(model, box3, angleDeg = null) {
     if (!model || !box3?.isBox3) return null;
 
@@ -241,7 +382,6 @@ export default function ResizableMovableBox() {
   }
 
   const renderWallFunc = () => {
-    // console.log("doors",doors)
     if (!walls || !walls.length) return
     const modelThreeCommonRefT = modelThreeCommonRef.current;
     let modelDoor;
@@ -259,7 +399,7 @@ export default function ResizableMovableBox() {
         ];
     } catch { }
     let objDoors = {}
-     let objDoorsModel = {}
+    let objDoorsModel = {}
     if (doors && doors.length) {
       for (let i = 0; i < doors.length; i++) {
         const door = doors[i]
@@ -349,10 +489,10 @@ export default function ResizableMovableBox() {
             objDoorsModel[doorGroup.uuid] = doorGroup
           }
         }
+        mesh.userData.wallId = door.wallId;
         objDoors[mesh.id] = mesh;
       }
     }
-    // console.log("objDoors", objDoors)
     let objWindows = {}
     let objWindowsModel = {}
     if (windows && windows.length) {
@@ -431,7 +571,6 @@ export default function ResizableMovableBox() {
 
           // // 1. Clone mesh
           // const mesh2 = mesh.clone();
-          // console.log("mesh222", mesh2)
           mesh2.matrixAutoUpdate = true;
           // mesh2.material.wireframe = true;
           // 1. Tính bounding box và tâm
@@ -466,6 +605,7 @@ export default function ResizableMovableBox() {
             objWindowsModel[windowGroup.uuid] = windowGroup
           }
         }
+        mesh.userData.wallId = window.wallId;
         objWindows[mesh.id] = mesh;
       }
     }
@@ -496,11 +636,14 @@ export default function ResizableMovableBox() {
         wallMesh.rotateX(-Math.PI / 2);
 
         // Cắt các cửa chính
+
         try {
           for (let kd in objDoors) {
             const meshCut = objDoors[kd];
-            wallMesh.updateMatrix();
-            wallMesh = CSG.subtract(wallMesh, meshCut);
+            if (meshCut && meshCut.userData && meshCut.userData.wallId && meshCut.userData.wallId == wall.id) {
+              wallMesh.updateMatrix();
+              wallMesh = CSG.subtract(wallMesh, meshCut);
+            }
           }
         } catch (err) {
           console.error("CSG error:", err);
@@ -509,8 +652,10 @@ export default function ResizableMovableBox() {
         try {
           for (let kd in objWindows) {
             const meshCut = objWindows[kd];
-            wallMesh.updateMatrix();
-            wallMesh = CSG.subtract(wallMesh, meshCut);
+            if (meshCut && meshCut.userData && meshCut.userData.wallId && meshCut.userData.wallId == wall.id) {
+              wallMesh.updateMatrix();
+              wallMesh = CSG.subtract(wallMesh, meshCut);
+            }
           }
         } catch (err) {
           console.error("CSG error:", err);
@@ -522,8 +667,8 @@ export default function ResizableMovableBox() {
           {/* {Object.entries(objDoors).map(([id, meshCut]) => (
             <primitive key={`door-${meshCut.uuid}`} object={meshCut} />
           ))} */}
-          
-         {Object.entries(objDoorsModel).map(([id, obj]) => (
+
+          {Object.entries(objDoorsModel).map(([id, obj]) => (
             <primitive key={`door-${obj.uuid}`} object={obj} />
           ))}
           {Object.entries(objWindowsModel).map(([id, obj]) => (
@@ -627,27 +772,7 @@ export default function ResizableMovableBox() {
     return null; // không render gì vì đã thêm trực tiếp vào scene
   }
 
-  function SetupCamera() {
-    const { scene, camera, size } = useThree();
-    sceneRef.current = scene
-    cameraRef.current = camera;
-    useEffect(() => {
-      // Set các thông số camera
-      let positionGridFirst = positionGrid;
-      camera.fov = 90;
-      camera.aspect = size.width / size.height;
-      camera.near = 0.1;
-      camera.far = 2000;
-      camera.position.set(positionGridFirst.endX, 100, positionGridFirst.endZ);
-      camera.lookAt(new THREE.Vector3(positionGridFirst.endX / 2, 0, positionGridFirst.endZ / 2));
-      camera.updateProjectionMatrix();
-    }, [camera, size]);
 
-    return null;
-  }
-  function getInitialPositionDefault() {
-
-  }
   function SceneLights({ position }) {
     const lightRef = useRef();
 
@@ -708,6 +833,8 @@ export default function ResizableMovableBox() {
           helper.dispose?.();
         };
       }
+
+
     }, []);
 
     return (
@@ -773,16 +900,87 @@ export default function ResizableMovableBox() {
       />
     );
   }
+  const onCreatedThreeFiber = (three) => {
+    const camera = three.camera
+    const scene = three.scene
+    cameraRef.current = camera;
+    sceneRef.current = scene;
+    const size = three.size
+    try {
+      const camera = cameraRef.current
+      const scene = sceneRef.current
+      if (camera && scene) {
+        // Set các thông số camera
+        let positionGridFirst = positionGrid;
+        camera.fov = 60;
+        camera.aspect = size.width / size.height;
+        camera.near = 0.1;
+        camera.far = 10000;
+        camera.position.set(positionGridFirst.endX, 100, positionGridFirst.endZ);
+        camera.lookAt(new THREE.Vector3(positionGridFirst.endX / 2, 0, positionGridFirst.endZ / 2));
+        camera.updateProjectionMatrix();
+        const controls = OrbitControlsRef.current
+        if (controls) {
+          controls.target.set(
+            positionGridFirst.endX / 2,
+            5 * unitMToPixelCanvas,
+            positionGridFirst.endZ / 2
+          );
+          controls.update();
+        }
+      }
+    } catch { }
+  }
+
+  function BedRoom(props) {
+    let urlGlb = 'models/bedroom/scene_out_quan.glb'
+    // urlGlb = '/models/source/window.glb'
+    const gltf = useGLTF(urlGlb)
+    console.log("gltf", gltf)
+    return <primitive object={gltf.scene} {...props}
+      scale={100}
+      // position={[(positionGrid.startX + positionGrid.endX) / 2, 0, (positionGrid.startZ + positionGrid.endZ) / 2]}
+      position={[3135, 0, 3324.5]}
+    />
+  }
+  async function templateAIInstructScene() {
+    console.log("click templateAIInstructScene")
+    try {
+      // const formData = new FormData();
+      // formData.append('image', file); // 'image' là tên field backend mong đợi
+      // formData.append('modelVersion', versionModel); // 'image' là tên field backend mong đợi
+      // formData.append('modelName', modelName); // 'image' là tên field backend mong đợi
+      // formData.append('confidenceThreshold', confidenceThreshold); // 'image' là tên field backend mong đợi
+      // formData.append('overlapThreshold', overlapThreshold); // 'image' là tên field backend mong đợi
+      const response = await fetch('http://127.0.0.1:8888/generate_test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          room_type: "bedroom",
+          polygon: [[0, 0], [0, 5], [5, 5], [5, 0]],
+          doors: [],
+        }),
+      });
+      // if (responseFM && responseFM.data) {
+      //   setdetectedRes(responseFM.data)
+      // }
+    } catch { }
+  }
 
   return (
     <Rnd
       default={{
-        x: 820,
+        x: 1420,
         y: 20,
-        width: 320,
-        height: 320,
+        width: 420,
+        height: 420,
+        // x: 120,
+        // y: 20,
+        // width: 820,
+        // height: 820,
       }}
-      // default={getInitialPositionDefault()}
       minWidth={200}
       minHeight={200}
       bounds="window"
@@ -794,17 +992,21 @@ export default function ResizableMovableBox() {
       }}
       dragHandleClassName="drag-handle"
     >
-      <button className='cursor-move drag-handle'>drag</button>
+      <button className='cursor-move drag-handle'><RiDragMove2Fill size={20} /></button>
+      <button className='cursor-move drag-handle' onClick={templateAIInstructScene} >Template AI</button>
       <Canvas style={{ width: '100%', height: '100%' }} camera={{ position: [3, 3, 3] }}
         shadows
+        onCreated={onCreatedThreeFiber}
       >
-        {/* <loadStoreModel /> */}
+        <BedRoom />
+
+        {/* <LoadStoreModel /> */}
         <AmbientLightDemo />
         {/* <HemisphereLightDemo /> */}
         {/* <PointLightDemo /> */}
         {/* <DirectionalLightDemo /> */}
         {/* <SpotLightDemo /> */}
-        {/*Environment preset={sunset,sunrise,dawn,night,city,park,forest,lobby,apartment}  */}
+        {/*Environment preset={sunset,sunrise,dawn,night,city,park,forest,lobby,apartment,apartment, city, dawn, forest, lobby, night, park, studio, sunset, warehouse}  */}
         <Environment preset="city"
           background={false} // can be true, false or "only" (which only sets the background) (default: false)
         // backgroundBlurriness={0} // optional blur factor between 0 and 1 (default: 0, only works with three 0.146 and up)
@@ -818,13 +1020,28 @@ export default function ResizableMovableBox() {
         //   scale: 100000      // kích thước mặt phẳng ánh sáng chiếu
         // }}
         />
+        {/* Gradient trời xanh */}
+        {/* <color attach="background" args={['#d8ecff']} /> */}
+
+        <Sky
+          distance={450000}
+          sunPosition={[0, 1, -1]}
+          inclination={0.2}      // càng gần 0, mặt trời càng lên cao (nền càng sáng)
+          azimuth={0.25}
+          turbidity={0}          // tăng lên sẽ làm xanh đậm hơn
+          rayleigh={0.1}            // tăng tán xạ xanh -> chỉnh màu xanh chính ở đây
+          mieCoefficient={0.02}
+          mieDirectionalG={0.02}
+          elevation={90}
+          exposute={0.1}
+        />
+        {/* <color attach="background" args={['#87cefa']} /> */}
 
 
         {/* <mesh position={[500, 0, 500]} castShadow receiveShadow>
           <boxGeometry args={[100, 100, 100]} />
           <meshStandardMaterial color="white" />
         </mesh> */}
-        <SetupCamera /> {/* 👈 Add camera helper */}
         <Text
           position={[20, 0, 0]}
           fontSize={3}
@@ -877,13 +1094,21 @@ export default function ResizableMovableBox() {
         /> */}
         <Axes />
         <Box />
-        <OrbitControls />
+        <OrbitControls
+          ref={OrbitControlsRef}
+          enableDamping
+          dampingFactor={0.05}
+          screenSpacePanning={false}
+        // maxPolarAngle={Math.PI / 2}
+        />
         <RectGrid stepX={20} stepZ={10}
           startX={positionGrid.startX}
           endX={positionGrid.endX}
           startZ={positionGrid.startZ}
           endZ={positionGrid.endZ}
           width={gridLayout3d[0]} height={gridLayout3d[1]}
+          color={'#ffffff'}
+          opacity={1}
         />
         {renderWallFunc()}
         {/* {renderDoorFunc()} */}

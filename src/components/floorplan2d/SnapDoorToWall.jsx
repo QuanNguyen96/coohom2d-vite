@@ -7,6 +7,7 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
   const { mode, walls, vertices, doors, setDoors, windows, unitMToPixelCanvas, setUnitMToPixelCanvas, } = useEditor();
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [snapInfo, setSnapInfo] = useState(null);
+  const [isMouseInsideCanvas, setIsMouseInsideCanvas] = useState(false);
   const getVertexById = (id) => vertices.find((v) => v.id === id);
   const DOOR_CONFIG = {
     width: 1.2 * unitMToPixelCanvas,
@@ -40,7 +41,27 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
     ),
   };
 
-  
+  useEffect(() => {
+    if (!stageRef?.current) return;
+
+    const stage = stageRef.current;
+
+    const handleEnter = () => {
+      setIsMouseInsideCanvas(true);
+    };
+
+    const handleLeave = () => {
+      setIsMouseInsideCanvas(false);
+    };
+
+    stage.on("mouseenter", handleEnter);
+    stage.on("mouseleave", handleLeave);
+
+    return () => {
+      stage.off("mouseenter", handleEnter);
+      stage.off("mouseleave", handleLeave);
+    };
+  }, []);
 
   const toWorldCoords = (x, y) => {
     const transform = stageRef.current.getAbsoluteTransform().copy().invert();
@@ -158,33 +179,34 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
       };
     }
 
+
+
+    const dir = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
+    const perp = { x: -dir.y, y: dir.x };
+    const center = point;
+    const EXPAND_MARGIN = 5; // 👈 bạn có thể chỉnh 2–5px tuỳ độ nhạy mong muốn
+
+    const halfLen2 = doorLength / 2 + EXPAND_MARGIN;
+    const halfThick2 = wallThickness / 2 + EXPAND_MARGIN;
+    const outerPolygon = [
+      {
+        x: center.x - dir.x * halfLen2 - perp.x * halfThick2,
+        y: center.y - dir.y * halfLen2 - perp.y * halfThick2,
+      },
+      {
+        x: center.x + dir.x * halfLen2 - perp.x * halfThick2,
+        y: center.y + dir.y * halfLen2 - perp.y * halfThick2,
+      },
+      {
+        x: center.x + dir.x * halfLen2 + perp.x * halfThick2,
+        y: center.y + dir.y * halfLen2 + perp.y * halfThick2,
+      },
+      {
+        x: center.x - dir.x * halfLen2 + perp.x * halfThick2,
+        y: center.y - dir.y * halfLen2 + perp.y * halfThick2,
+      },
+    ];
     if (doors && doors.length) {
-
-      const dir = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
-      const perp = { x: -dir.y, y: dir.x };
-      const center = point;
-      const EXPAND_MARGIN = 5; // 👈 bạn có thể chỉnh 2–5px tuỳ độ nhạy mong muốn
-
-      const halfLen2 = doorLength / 2 + EXPAND_MARGIN;
-      const halfThick2 = wallThickness / 2 + EXPAND_MARGIN;
-      const outerPolygon = [
-        {
-          x: center.x - dir.x * halfLen2 - perp.x * halfThick2,
-          y: center.y - dir.y * halfLen2 - perp.y * halfThick2,
-        },
-        {
-          x: center.x + dir.x * halfLen2 - perp.x * halfThick2,
-          y: center.y + dir.y * halfLen2 - perp.y * halfThick2,
-        },
-        {
-          x: center.x + dir.x * halfLen2 + perp.x * halfThick2,
-          y: center.y + dir.y * halfLen2 + perp.y * halfThick2,
-        },
-        {
-          x: center.x - dir.x * halfLen2 + perp.x * halfThick2,
-          y: center.y - dir.y * halfLen2 + perp.y * halfThick2,
-        },
-      ];
       for (const d of doors) {
         if (d.wallId !== wall.id) continue;
         if (isPolygonOverlap(outerPolygon, d.outerPolygon)) {
@@ -200,10 +222,11 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
           };
         }
       }
+    }
+    if (windows && windows.length) {
       for (const d of windows) {
         if (d.wallId !== wall.id) continue;
         if (isPolygonOverlap(outerPolygon, d.outerPolygon)) {
-          console.log("da va vao nhau")
           return {
             valid: false,
             x: point.x,
@@ -265,7 +288,7 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
       const doorLength = DOOR_CONFIG.width;
       const doorHeight = DOOR_CONFIG.height;
       const thickness_origin = snapInfo.wall.thickness ?? WALL_WIDTH;
-      const thickness = thickness_origin + 4;
+      const thickness = thickness_origin + 3;
       const center = snapInfo.snapPoint;
       const angleRad = (snapInfo.angle * Math.PI) / 180;
 
@@ -335,7 +358,6 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
       };
       if (snapInfo?.valid) {
         // Thêm cửa mới vào mảng cửa hiện có
-        console.log("setdoor1111111111111")
         setDoors((prevDoors) => [...prevDoors, doorData]);
       }
     }
@@ -370,13 +392,18 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
       y: stageBox.top + absY,
     };
   };
+  const getStageScale = () => {
+    if (!stageRef.current) return 1;
+    return stageRef.current.scaleX?.() || 1; // scaleX = scaleY vì luôn đồng đều
+  };
   const renderPreviewDoor = () => {
     if (!snapInfo?.snapped || !snapInfo.snapPoint || !snapInfo.wall)
       return null;
 
     const screen = toScreenCoords(snapInfo.snapPoint.x, snapInfo.snapPoint.y);
-    const doorLength = DOOR_CONFIG.width;
-    const thickness = snapInfo.wall.thickness ?? WALL_WIDTH;
+    const scale = getStageScale();
+    const doorLength = DOOR_CONFIG.width * scale;
+    const thickness = snapInfo.wall.thickness ?? WALL_WIDTH * scale;
 
     return (
       <>
@@ -390,7 +417,7 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
             height: `${thickness + 2}px`,
             backgroundColor: "#fff",
             border: `none`,
-            transform: `translate(-50%, -50%) rotate(${snapInfo.angle}deg)`,
+            transform: `translate(-50%, -50%) scale(${scale}) rotate(${snapInfo.angle}deg)`,
             transformOrigin: "center center",
             pointerEvents: "none",
             zIndex: 9998,
@@ -419,8 +446,9 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
   return (
     <>
       {/* Cửa preview */}
-      {!snapInfo?.snapped && mode == 'door' && (() => {
+      {!snapInfo?.snapped && isMouseInsideCanvas && mode == 'door' && (() => {
         const screenPos = toScreenCoords(pos.x, pos.y); // ✅ chuyển sang screen coords
+        const scale = getStageScale();
         return (
           <div
             style={{
@@ -430,7 +458,7 @@ const SnapDoorWindowToWall = ({ stageRef }) => {
               pointerEvents: "none",
               opacity: snapInfo ? 0.9 : 0.3,
               zIndex: 9999,
-              transform: `translate(-50%, -50%) rotate(${pos.angle}deg)`,
+              transform: `translate(-50%, -50%) scale(${scale}) rotate(${pos.angle}deg)`,
               transformOrigin: "center center",
             }}
           >

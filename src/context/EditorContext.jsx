@@ -10,16 +10,17 @@ export const EditorProvider = ({ children }) => {
   const [selectedWall, setSelectedWall] = useState(null); // 👈 THÊM DÒNG NÀY
   const [vertices, setVertices] = useState([]); // ✅ Thêm dòng này
   const [wallChange, setWallChange] = useState([]); // ✅ Thêm dòng này
-  const [gridLayout3d, setGridLayout3d] = useState([1000, 1000]); // ✅ Thêm dòng này
+  const [gridLayout3d, setGridLayout3d] = useState([10000, 10000]); // ✅ Thêm dòng này
   // trong lưới 1 ô nhỏ đang là 30*30 (đơn vị threejs)
   // trên cohom 1 ô là 0.5m=50cm nên tạm quy  định 1 đơn vị three = 600/30=2mm
   const [unitThreeToMM, setUnitThreeToMM] = useState(2)
   // 100 px = 1 mét = 1000mm
   const [unitMToPixelCanvas, setUnitMToPixelCanvas] = useState(100)
   const modelThreeCommonRef = useRef({});
-  const [showFormDetect, setshowFormDetect] = useState(true)
+  const [showFormDetect, setshowFormDetect] = useState(false)
   const canvasLayout2dRef = useRef()
-  const [pixelPerMeter, setPixelPerMeter] = useState(100);
+  // tức là 1pixel=0.01m => 1m = 100pixel
+  const [pixelImgDetectPerMeter, setPixelImgDetectPerMeter] = useState(0.01);
 
   return (
     <EditorContext.Provider
@@ -41,7 +42,7 @@ export const EditorProvider = ({ children }) => {
         modelThreeCommonRef,
         showFormDetect, setshowFormDetect,
         canvasLayout2dRef,
-        pixelPerMeter, setPixelPerMeter,
+        pixelImgDetectPerMeter, setPixelImgDetectPerMeter,
 
       }}
     >
